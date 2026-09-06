@@ -1,6 +1,6 @@
 # Compatibility
 
-This page lists support in the current release. Run `route-steward capabilities` for the corresponding machine-readable list.
+This page is the readable support matrix for the current release. `route-steward capabilities` is the machine-readable source for implemented operations and drivers. Use `route-steward capabilities --operation <id>` when only one operation contract is needed.
 
 ## Host and compute
 
@@ -9,76 +9,48 @@ This page lists support in the current release. Run `route-steward capabilities`
 | Compute | Bring-your-own server over SSH |
 | Operating system | Ubuntu 24.04 |
 | Architecture | amd64 |
-| Ownership | Dedicated, rebuildable host with `compute.host_ownership=dedicated` |
+| Ownership | Dedicated, rebuildable host |
 | SSH identity | Valid Unix username and local private-key path |
 
-Initial setup installs the RST-required package, SSH key-only, and UFW baseline. See [Operations](../OPERATIONS.md#remote-ownership) for the exact effects and uninstall behavior.
+Current host preparation and uninstall effects are documented in [Operations](../OPERATIONS.md#deployment-ownership).
 
 ## Network topology
 
 | Capability | Supported value |
 | --- | --- |
-| Ingress | Hysteria2, with the server binary version and SHA-256 pinned in deployment code |
+| Ingress | Hysteria2 |
 | Direct Route | Client → Hysteria2 Server → declared exit |
 | Relay Route | Client → Hysteria2 entry → one WireGuard Link → exit/NAT |
-| Link | Single-hop WireGuard over an isolated RST interface/port/subnet |
-| Address families | Hysteria2 client ingress supports IPv4 and IPv6; the relay Link uses IPv4 |
-| Optional port hopping | One `port_hopping` range of 2–8 consecutive UDP ports, starting at the Route listener; requires the server's nftables or iptables helper and opens that exact UFW range |
+| Link | Single-hop WireGuard over an RST-managed interface |
+| Address families | Hysteria2 ingress supports IPv4 and IPv6; relay Link uses IPv4 |
+| Port hopping | Optional bounded consecutive UDP range beginning at the Route listener |
 
 ## Desired state
 
-Inventory schema `2` stores:
+Inventory schema 2 stores Server, Link, Route, optional Provider, Profile, and ClientTarget state. Schema-1 inventory and recovery archives remain readable through deterministic compatibility translation.
 
-- Server with `compute.driver=byo-ssh`;
-- Link with `driver=wireguard`;
-- Route with `ingress.driver=hysteria2`;
-- optional Provider with `source_type=mihomo-http`;
-- Profile for reusable Route, Provider, and ordered generic routing selection;
-- ClientTarget for renderer and delivery identity.
+Profiles select Routes, optional Providers, and ordered generic routing rules. Current rule match types are `domain_suffix`, `geosite`, and `geoip`; actions are `direct` or an enabled included Route.
 
-Older schema-1 Profiles may contain `privacy`, `balanced-cn`, China-direct state, or historical service bindings. RST translates those values into schema-2 routing rules on load; new state uses only generic rules. Recovery accepts schema-1 archives, restores canonical schema 2, and resets observed evidence.
+## Clients
 
-## Clients and rendering
-
-| Capability | Supported behavior |
+| Renderer | Supported behavior |
 | --- | --- |
-| Mihomo | Private YAML file or optional private subscription for Mihomo/Clash Verge-compatible clients, with explicit `GLOBAL`/emergency selection, Provider `use` composition, ordered Profile routing, and optional target-scoped `PROCESS-NAME` routing; compatibility baseline Mihomo 1.19.27 |
-| Karing | Private Clash YAML imported from a local file; compatibility baseline 1.2.23.2606; Windows, macOS, Linux, iOS, Android, and tvOS |
-| Shadowrocket offline | Private node-import HTML generated without external page resources |
-| Shadowrocket subscription | Optional isolated Cloudflare Worker delivery for one ClientTarget |
-| Hysteria2 headless | Private official-client JSON plus foreground loopback HTTP/SOCKS5 runtime for one selected Route |
-| Profile routing | Ordered `domain_suffix`, `geosite`, and `geoip` matches with `direct` or enabled included Route actions |
+| Mihomo | Private YAML for Mihomo/Clash Verge-compatible clients; local file or optional private subscription; Profile routing; optional Providers and process-name rules |
+| Karing | Private Clash YAML with Hysteria2 certificate pinning |
+| Shadowrocket | Private node import or optional private subscription |
+| Hysteria2 | Official-client JSON plus foreground loopback HTTP/SOCKS5 runtime for one selected Route |
 
-A ClientTarget selects the renderer and delivery method. Its Profile selects Routes, optional Providers, and routing. The generated Mihomo/Karing YAML leaves TUN, system proxy, host routing, and active-profile settings to the client application.
+Client applications own their active profile, selector state, system proxy, TUN, and other runtime capture settings.
 
-Mihomo receives an explicit `GLOBAL` group containing managed nodes, `DIRECT`, `REJECT`, and included Provider sets. Optional `mihomo_process_names` accepts up to 32 plain executable or package names and creates an `Applications` group. Concrete names remain private.
+## Private subscription delivery
 
-Karing output requires certificate fingerprints on every managed Hysteria2 node and is imported as a local Clash file. A headless Hysteria2 target selects one enabled Route and binds HTTP/SOCKS5 to an IP-literal loopback address; `auto` ingress tries IPv4 and then IPv6.
+Mihomo and Shadowrocket ClientTargets may publish through an isolated Cloudflare Worker endpoint. Subscription state and bearer credentials are target-scoped. Publication verifies the returned body against the generated configuration.
 
-Port hopping is rendered for all four clients. The headless client uses Hysteria's 30-second hop interval. See the dated [client](CLIENT-RESEARCH.md) and [reliability](RELIABILITY-RESEARCH.md) records for selection evidence.
+## Validation and maintenance
 
-## Providers
+- `audit` checks supported remote Route state without changing it.
+- `health` runs an on-demand real Hysteria2 traffic check for direct and relay Routes.
+- `migrate-route` replaces direct Routes or either relay endpoint through a resumable overlap workflow.
+- encrypted local backup and recovery preserve durable private state and supported legacy inventory.
 
-The optional `mihomo-http` Provider accepts an HTTP or HTTPS source URL stored in local secret storage. RST remains fully usable with zero Providers.
-
-## Agent interfaces
-
-| Interface | Supported behavior |
-| --- | --- |
-| Repository Skill | Operating instructions for AI agents |
-| `route-steward` | Native sanitized JSON CLI for Linux, macOS, and Windows on amd64/arm64 |
-| `route-steward mcp` | In-process local stdio MCP over the same Go engine |
-| `agent/route-steward-agent.ps1` | Compatibility forwarder for older callers |
-| AI runtime | A tool-capable runtime that can read the repository and invoke the executable |
-
-## Audit, drift, migration, and recovery
-
-Audit covers RST services and configuration, firewall and network state, WireGuard, Hysteria2 listeners and certificates, egress, and ClientTarget renders.
-
-`health` supports direct and relay Routes and checks a real client handshake, Internet and DNS access, exit identity, supported address families, request latency, and relay state. It is an on-demand test; packet loss is currently unsupported. `proxy --check` performs a corresponding traffic test for one headless target.
-
-`migrate-route` supports direct Route replacement and either endpoint of a relay. It tests replacement traffic before switching affected ClientTargets and preserves the old capacity. Recovery verifies the encrypted archive, relocates SSH material, translates supported schema-1 inventory when necessary, validates current state, and resets observed evidence.
-
-## Optional Cloudflare delivery
-
-The Worker delivers a token-protected Mihomo YAML or Shadowrocket node subscription for one isolated ClientTarget. Payloads are split into bounded Worker-secret chunks; the current RST limit is 240000 UTF-8 bytes. Mihomo responses include a YAML content type and a 24-hour subscription refresh hint. Subscription-token rotation is target-scoped, requires explicit current approval, and leaves Route and other ClientTarget credentials unchanged.
+Detailed command behavior, host effects, migration, and recovery are in [Operations](../OPERATIONS.md). Security and visibility boundaries are in [Security](../SECURITY.md) and [Privacy](PRIVACY.md).

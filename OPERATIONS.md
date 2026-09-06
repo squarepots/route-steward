@@ -1,33 +1,21 @@
 # Operations
 
-This is the command and state reference for agents and contributors. New users can start with the [Quickstart](docs/QUICKSTART.md).
+This is the command, state, host, migration, and recovery reference for agents and contributors. New users can start with the [Quickstart](docs/QUICKSTART.md).
 
 ## Machine interface
 
 The `route-steward` executable emits sanitized JSON and uses the private root selected by `--private-dir` (default `./private`). `route-steward mcp` exposes the same Go engine over local stdio.
 
-The normal sequence is:
+Use the smallest read that supports the current task:
 
 ```text
-capabilities
-  ↓
-bootstrap when private state is absent
-  ↓
-context + drift
-  ↓
-gather missing local/external facts
-  ↓
-create the requested objects
-  ↓
-preflight(operation, target, context)
-  ↓
-ready=false → gather/ask/stop
-ready=true  → execute
-  ↓
-audit and validate
+route-steward capabilities --operation <operation>
+route-steward context --private-dir <dir> --target <object-id>
 ```
 
-Every mutation requires preflight with `ready=true`. Send private operation context over stdin where possible.
+Full `capabilities` and `context` remain available for discovery. Read `drift`, `audit`, `health`, or `migrations` when current observed or remote evidence affects the requested decision.
+
+Every mutation runs preflight and requires `ready=true`. Send private structured context over stdin where possible.
 
 ## Agent result envelope
 
@@ -43,13 +31,13 @@ Machine responses use a stable top-level shape:
 }
 ```
 
-`success=false` means the requested action did not complete. For a blocked mutation, inspect `missing_context`, `conflicts`, `authorized`, and `expected_effects`. Raw lower-level diagnostics stay local.
+Blocked mutations expose missing context, conflicts, authorization, and expected effects. Partial failures may report the completed stage, whether state changed, and a safe retry instruction. Raw lower-level diagnostics stay local.
 
 ## Private state
 
 ```text
-<private>/inventory.json    desired Server / Link / Route / Provider / Profile / ClientTarget state
-<private>/secrets/          credentials, Provider URLs, subscription state, payloads
+<private>/inventory.json    desired state
+<private>/secrets/          credentials, Provider URLs, subscription state and payloads
 <private>/observed.json     sanitized audit and health evidence
 <private>/migrations.json   resumable migration checkpoints
 <private>/delivery/         generated ClientTarget files and render hashes
@@ -58,137 +46,63 @@ Machine responses use a stable top-level shape:
 <private>/health/           temporary health-check configuration
 ```
 
-Use `context` and `drift` for normal inspection. Read raw private files only when an operation requires them, and keep their contents out of chat.
+Read raw private files only when an operation requires them. Keep their contents out of chat and tracked files.
 
-## Inventory schema
+## Desired state
 
-Inventory schema `2` contains:
+Inventory schema 2 contains:
 
-- **Server** declares `compute.driver=byo-ssh`.
-- **Link** declares `driver=wireguard`.
-- **Route** declares `ingress.driver=hysteria2`.
-- **Provider** declares `source_type=mihomo-http` and a local `source_secret_ref`.
-- **Profile** selects Routes, optional Providers, and ordered generic routing rules.
-- **ClientTarget** references a Profile and stores renderer/delivery settings. Renderer-specific fields such as Mihomo process names stay on the ClientTarget.
+- **Server** with BYO SSH compute facts;
+- **Link** for one WireGuard hop;
+- **Route** for a direct or relay Hysteria2 path;
+- optional **Provider** for a Mihomo HTTP source;
+- **Profile** for Route, Provider, and ordered routing selection;
+- **ClientTarget** for renderer and delivery settings.
 
-Schema-1 inventory remains readable through deterministic compatibility translation. A subsequent desired-state write persists schema 2. `version.txt` stores product SemVer separately.
+Schema-1 inventory remains readable through deterministic compatibility translation. A later desired-state write persists schema 2.
 
-## Capability discovery
+## Focused context
 
-Run `route-steward capabilities` for operations, drivers, renderers, required context, effects, executors, and authorization classes.
-
-`route-steward migrations --private-dir <directory>` returns sanitized checkpoint summaries after an agent or process restart.
-
-## Bootstrap
-
-Bootstrap creates empty schema-2 inventory plus schema-1 secret index and observed state, then creates the output directories. It is idempotent for a complete private root and rejects partial initialization.
-
-## Structured desired-state operations
-
-Creation operations accept structured context and return JSON.
-
-### Server
-
-Adding a Server records its ID, public network facts, SSH user and key path, ownership, and optional provider metadata. It updates local inventory without connecting to the server.
-
-### Link
-
-A new WireGuard Link references entry and exit Servers, allocates its interface, port, and subnet, and generates keys locally. Deployment is a separate operation.
-
-### Route
-
-A new direct or relay Route references existing topology, allocates a listener when needed, generates Hysteria2 credentials and certificates locally, and starts disabled with state `pending`. Successful deployment enables it. Optional `port_hopping` uses 2–8 consecutive UDP ports beginning at `listen_port`; deployment opens that UFW range, grants the service capability required by Hysteria, and rejects listener conflicts.
-
-### Provider
-
-A generic Provider is optional. Its URL is stored only in local secret storage. Provider update is transactional and removal is blocked while a Profile references it.
-
-### Profile / ClientTarget
-
-Profiles store Route and Provider selection plus ordered generic routing rules. A rule matches a domain suffix, geosite category, or geoip category and selects either direct handling or an enabled Route included by the Profile. ClientTargets store renderer and delivery settings. References block unsafe Profile, Provider, and subscription-backed ClientTarget removal.
+`context --target <id>` returns one object plus its direct relationships. It avoids expanding unrelated Profiles and routing rules. A Profile target includes its own routing rules because they are part of that Profile's intent. If the same ID exists in multiple object kinds, focused context fails with candidate kinds instead of guessing.
 
 ## Deployment ownership
 
-Route deployment runs the embedded server scripts and keeps lower-level output out of the JSON response.
+RST owns its `/usr/local/lib/route-steward`, `/etc/route-steward`, `/var/lib/route-steward`, `route-steward-*` systemd units, `route-steward-hysteria` runtime user, `wg-rst*` interfaces, generated files, and RST-named policy files.
 
-RST owns its `/usr/local/lib/route-steward`, `/etc/route-steward`, `/var/lib/route-steward`, `route-steward-*` systemd units, `route-steward-hysteria` runtime user, `wg-rst*` Link interfaces, generated files, and individually named policy files. Initial host preparation installs the RST-required package set, an RST-named SSH key-only drop-in, and a UFW baseline. A host marker makes that preparation one-time for current releases.
+Current initial preparation installs the required package set, an RST-named SSH key-only drop-in, and the UFW baseline. A host marker makes current preparation one-time. Use a dedicated, rebuildable Ubuntu 24.04 amd64 host. Existing unrelated services, packages, networking software, WireGuard configuration, and firewall rules stay outside RST ownership.
 
-Use a dedicated, rebuildable Ubuntu 24.04 amd64 host. Deployment and uninstall leave unrelated Xray, Hysteria, WireGuard, service, package, and firewall state in place. Older Route Steward releases may already have changed swap/fstab, SMTP egress, sysctl/BBR, journald, unattended-upgrades, or vnstat; current deployment does not recreate those settings and does not automatically reverse them.
+Older releases may have changed swap/fstab, SMTP egress, sysctl/BBR, journald, unattended-upgrades, or vnstat. Current deployment does not recreate those settings and does not silently reverse them.
 
-An already-deployed Route is audited before another deployment. Drifted or undetermined state blocks the operation until the discrepancy is understood.
+An already-deployed Route is audited before overwrite. Drifted or undetermined state blocks ordinary deployment until the discrepancy is understood.
 
-After deployment, audit updates observed evidence and rendering records ClientTarget hashes. During migration, rendering waits until the replacement passes health.
+## Audit and health
 
-## Audit and drift
+`audit` compares one supported remote Route with desired state and stores bounded evidence. `drift` compares desired state with the available observed and render evidence.
 
-Remote audit converts server results into typed evidence. Raw SSH and server diagnostics stay local.
+`health --target <route-id>` audits the Route, starts the pinned official Hysteria2 client with a temporary loopback proxy, and makes Internet and DNS requests through the Route. It checks exit identity, supported address families, latency, and relay WireGuard state. Public IP values are returned only when explicitly requested.
 
-Supported drift categories include `service-missing`, `remote-config-mismatch`, `firewall-network-mismatch`, `wireguard-link-mismatch`, `hysteria-listener-mismatch`, `certificate-mismatch`, `egress-mismatch`, `client-render-stale`, `undetermined`, and in-sync/disabled/never-audited informational states.
-
-Observed evidence can be regenerated. Repair requires a supported operation and preflight.
-
-## Connection health
-
-`route-steward health --target <route-id>` audits the Route, starts the pinned official Hysteria2 client with a temporary loopback HTTP proxy, and sends requests to ipify's IPv4/IPv6 endpoints and Cloudflare's trace endpoint. It reports server reachability, audit, handshake, Internet and DNS access, exit identity, address families, latency, and relay WireGuard state. Hopping Routes use their rendered multi-port client configuration.
-
-Health leaves inventory and remote state unchanged. It may download the checksum-verified helper into `<private>/tools/` and records sanitized evidence in `observed.json`. Temporary configuration under `<private>/health/` contains live Route credentials, uses private permissions, and is removed afterward. Public IP values require an explicit request. A failed health check supplies evidence for a later decision.
+Observed evidence is historical. Run a current audit or health check when the decision depends on current remote state.
 
 ## ClientTargets
 
-Renderers consume a ClientTarget plus its referenced Profile.
+Current renderers and support are listed in [Compatibility](docs/COMPATIBILITY.md). Rendering validates staged output before replacing the current artifact. A failed validation leaves the previous usable file in place.
 
-Current renderers:
+Mihomo and Shadowrocket ClientTargets may use private subscription delivery. Publication uses the selected target's Worker and token state, publishes the generated body, and verifies the endpoint returns that body. Token rotation is target-scoped and requires explicit current approval.
 
-- `mihomo` — private Hysteria2 Routes plus zero or more explicitly included generic Providers, with file or optional private-subscription delivery and optional target-scoped process-name rules;
-- `karing` — private Clash YAML tested with Karing 1.2.23.2606 and Hysteria2 certificate pinning;
-- `shadowrocket` — offline node import or target-scoped private subscription import;
-- `hysteria2` — official-client JSON for one explicitly selected managed Route, with HTTP and SOCKS5 sharing one loopback listener.
-
-A Provider is optional. New Profiles start with no routing rules. Schema-1 Profiles are upgraded in memory: historical explicit service bindings become geosite Route rules, `balanced-cn` becomes its equivalent direct rules, and `privacy` or blank becomes an empty rule set. A successful desired-state write persists canonical schema 2.
-
-Mihomo process routing uses `ClientTarget.mihomo_process_names` with plain executable or package names. Generated YAML sets strict process matching, adds an `Applications` group with `DIRECT` and `Private Routes`, and places `PROCESS-NAME` rules after private-address rules and before ordered Profile routing rules. Its explicit `GLOBAL` group contains managed nodes, `DIRECT`, `REJECT`, and included Provider sets. Sanitized context reports only the number of configured process names. Client applications control TUN, system proxy, host routing, and DNS capture.
-
-The headless renderer defaults to `127.0.0.1:1080` and `auto` ingress selection (IPv4, then IPv6). It accepts only IP-literal loopback listeners. Separate concurrent targets need separate ports.
-
-For port hopping, Mihomo and Karing receive `ports`, Shadowrocket receives the range in its Hysteria URI, and headless JSON carries the range with a 30-second UDP hop interval.
-
-`route-steward proxy --target <client-target> --check` renders the target, obtains the verified official Hysteria2 client, makes one HTTP request through the Route, compares its IPv4 exit with inventory, and stops. Plain `proxy` runs in the foreground for supervision by the caller. The check contacts ipify and omits the observed address.
-
-New renderer support requires implementation and tests in Route Steward.
-
-## Private subscription
-
-Subscription state belongs to one ClientTarget. Publication accepts a Mihomo or Shadowrocket target, uses its Worker/host identity and bearer token, exports the renderer-specific configuration, deploys the Worker, and verifies that the endpoint returns the exact generated body. Mihomo publication also writes a private subscription-reference artifact for one-time import into a Clash Verge-compatible client; later publication updates the same URL.
-
-Token rotation is a `credential-change`, requires explicit current approval, and recovers interrupted publication through a local pending token. It changes only the selected ClientTarget and has a dedicated command outside generic MCP execution.
-
-Cloudflare authentication comes from the user's local Cloudflare/Wrangler environment. Route Steward keeps authentication tokens out of output and changes only the selected Worker.
-
-Cloud-hosted agents may see the tool arguments required for an operation, including server IP, SSH username, local key path, and selected IDs. Use an offline runtime when those values must remain local to the operator machine.
+Client applications continue to own active profile selection, system proxy, TUN, and other runtime capture settings.
 
 ## Migration
 
-Migration records each stage in private state:
+`migrate-route` records a resumable checkpoint in private state. It creates replacement capacity, deploys and validates it while the old path remains available, switches affected Profile and ClientTarget output after health succeeds, republishes subscription-backed targets, and records completion.
 
-1. inspect current Route/dependencies;
-2. add replacement Server/Link/Route capacity as required;
-3. deploy replacement while old capacity remains enabled;
-4. audit and run a real Hysteria2 health check against the replacement;
-5. after a healthy result, switch the relevant Profile selections, render affected ClientTargets, and republish subscription-backed targets;
-6. if rendering/publication fails or the process is interrupted, restore the old selection before retrying and recheck replacement health;
-7. record the completed switch while leaving old remote services and cloud capacity intact;
-8. leave retirement for a later user request.
-
-`migrate-route` can register the replacement Server from structured context or use an existing Server. Relay replacement creates a matching WireGuard Link. A hopping direct Route or relay-entry replacement retains its range. A relay-exit replacement reserves the next same-width, non-overlapping range on the shared entry while both Routes are active. A blocked workflow returns `workflow-blocked`; retry with the recorded source Route and replacement Server.
+If rendering or publication fails after a remote change, the workflow records the stage and restores or preserves the old selection as required before retry. Completed migration leaves old remote capacity available until the user requests retirement.
 
 ## Backup and recovery
 
-Backup creates an encrypted archive containing canonical schema-2 inventory, secrets, active migration checkpoints, and required SSH material. Regenerable observed evidence is not included in new archives. The password is entered through a local 7-Zip prompt.
+Backup creates an encrypted archive containing canonical inventory, secrets, active migration checkpoints, and required SSH material. Regenerable observed evidence is excluded from new archives. The password is entered through a local 7-Zip prompt.
 
-Recovery restores to a clean private root, verifies the SHA-256 manifest, rejects unsafe paths and symlinks, translates supported schema-1 inventory when needed, relocates SSH material, validates current inventory, and resets observed evidence. Restored migrations are marked `recovery-revalidation-required` and repeat deployment and health checks.
+Recovery restores to a clean private root, verifies the archive manifest and paths, relocates private material, accepts supported schema-1 inventory, validates current state, recreates empty observed evidence, and marks restored migrations for revalidation before remote work continues.
 
-## Contributor/debug interfaces
+## Contributor interfaces
 
-The PowerShell entry point forwards older callers to the executable. Embedded Bash payloads implement remote host changes.
-
-Add missing product behavior to the Go engine with capability metadata and tests.
+The PowerShell agent entry point forwards compatible calls to the native executable. Embedded Bash payloads implement remote host changes. Add product behavior to the Go engine with focused tests and machine capability metadata.

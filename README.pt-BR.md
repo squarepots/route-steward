@@ -2,38 +2,29 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md)
 
-[Quickstart](docs/QUICKSTART.md) · [FAQ](docs/FAQ.md) · [Compatibility](docs/COMPATIBILITY.md) · [Operating boundary](docs/OPERATING-BOUNDARY.md) · [Security](SECURITY.md) · [Releases](https://github.com/squarepots/route-steward/releases)
+[Quickstart](docs/QUICKSTART.md) · [FAQ](docs/FAQ.md) · [Compatibility](docs/COMPATIBILITY.md) · [Security](SECURITY.md) · [Releases](https://github.com/squarepots/route-steward/releases)
 
-[![Validation](https://github.com/squarepots/route-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/squarepots/route-steward/actions/workflows/ci.yml)
+**Configure e mantenha rotas de proxy privadas em servidores que você controla com um agente de IA.**
 
-**Configure e gerencie proxies privados nos seus próprios servidores com um agente de IA.**
+Informe ao agente quais servidores você tem, como pretende usar as rotas e quais clientes utiliza. O Route Steward implanta a rota compatível, verifica tráfego real e gera configuração privada para clientes como Clash Verge e Shadowrocket.
 
-Entregue este repositório a um agente de IA e descreva o proxy desejado. O Route Steward fornece os comandos, verificações de segurança, configuração do servidor, arquivos de cliente, auditorias e recuperação.
-
-## Entregue a URL a um agente de IA
+## Entregue o repositório ao agente
 
 ```text
-Abra https://github.com/squarepots/route-steward e ajude-me a configurar e gerenciar um proxy privado em servidores que controlo. Leia AGENTS.md e .agents/skills/route-steward/SKILL.md, use a versão publicada do Route Steward adequada para este computador e comece com route-steward capabilities.
+Open https://github.com/squarepots/route-steward and use its Route Steward skill to set up or manage a private proxy on servers I control.
 ```
 
-Consulte o [guia de início](docs/QUICKSTART.md) para instalação e pré-requisitos.
+Veja o [Quickstart](docs/QUICKSTART.md) para instalação e primeiro uso.
 
-## O que você recebe
+## O que ele gerencia
 
-- um proxy Hysteria2 privado por um servidor ou uma conexão WireGuard entre dois servidores;
-- salto de portas opcional para redes que limitam ou filtram portas UDP específicas;
-- arquivos privados para clientes compatíveis com Mihomo/Clash Verge, Karing, Shadowrocket e Hysteria2 sem interface gráfica;
-- auditorias do servidor, relatórios de alterações de configuração e testes reais de tráfego sob demanda;
-- substituição retomável do servidor que testa o novo caminho antes de trocar os clientes;
-- backups locais criptografados e recuperação;
-- comandos JSON pela linha de comando ou pelo MCP stdio local.
+- rotas Hysteria2 diretas e relés WireGuard com dois servidores;
+- verificação de saúde, inspeção de desvios e substituição retomável de servidores;
+- configuração privada para clientes compatíveis de desktop, celular e uso sem interface;
+- entrega opcional por assinatura privada para clientes compatíveis com Mihomo/Clash Verge e Shadowrocket.
 
-A base atual é um VPS Ubuntu 24.04 amd64 dedicado e reconstruível, com acesso SSH autorizado por chave. Consulte [Compatibility](docs/COMPATIBILITY.md) para os protocolos, clientes e topologias exatos.
+O suporte atual de hosts, clientes, protocolos e formas de entrega está em [Compatibility](docs/COMPATIBILITY.md). Alterações no host, migração e recuperação estão em [Operations](OPERATIONS.md).
 
-## Efeitos no host e privacidade
+Estado privado, credenciais e configurações geradas ficam no diretório privado escolhido. Um ambiente de IA em nuvem pode processar entradas necessárias para uma operação. Veja [Privacy](docs/PRIVACY.md) e [Security](SECURITY.md).
 
-A preparação inicial altera firewall, swap, SSH, parâmetros do sistema, logs, atualizações, pacotes e monitoramento de todo o host. Use um servidor dedicado que possa ser reconstruído.
-
-Estado operacional, chaves, arquivos gerados e backups ficam no diretório privado escolhido e fora do Git. Um serviço de IA na nuvem pode receber os dados do servidor necessários para uma operação; use um ambiente offline quando eles precisarem ficar locais.
-
-Use somente servidores, contas e recursos de rede próprios ou que você tenha autorização para administrar. O Route Steward usa [AGPL-3.0-only](LICENSE); a atribuição MIT do gerador de QR está em [client/vendor/NOTICE.md](client/vendor/NOTICE.md).
+Route Steward usa a licença [AGPL-3.0-only](LICENSE).

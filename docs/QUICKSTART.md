@@ -1,76 +1,51 @@
 # Quickstart
 
-Route Steward helps an AI agent set up and manage a private proxy on VPS servers you control. The normal interface is one native executable for Linux, macOS, and Windows.
+Route Steward lets an AI agent set up and maintain private proxy routes on servers you control.
 
-## 1. Download Route Steward
+## 1. Install Route Steward
 
-Download the archive for your operating system and architecture from [GitHub Releases](https://github.com/squarepots/route-steward/releases). Run `route-steward` (or `route-steward.exe`) from that location or add it to `PATH`.
+Download the archive for your operating system and architecture from [GitHub Releases](https://github.com/squarepots/route-steward/releases). Run the `route-steward` executable from that directory or add it to `PATH`.
 
-Normal use requires no language toolchain. Source development uses Go 1.27:
+Source development uses Go 1.27. The optional Cloudflare subscription publisher uses Node.js.
 
-```text
-go run ./cmd/route-steward capabilities
-go test ./...
-```
-
-The optional Cloudflare Worker publisher uses Node.js.
-
-## 2. Give the repository to an agent
-
-Paste this into Codex or another agent that can read files and run local commands:
+## 2. Give the repository to your agent
 
 ```text
-Open https://github.com/squarepots/route-steward and help me set up and manage a private proxy on servers I control. Read AGENTS.md and .agents/skills/route-steward/SKILL.md, use the Route Steward release for this computer, and begin with route-steward capabilities.
+Open https://github.com/squarepots/route-steward and use its Route Steward skill to set up or manage a private proxy on servers I control.
 ```
 
-The agent discovers current support first, then creates private state if needed:
+Describe the outcome in normal language. Useful facts include:
+
+- the VPS or VPSs you control and their SSH access;
+- whether you want a direct route or a relay through another server;
+- how you want the routes used;
+- the client applications you use, such as Clash Verge or Shadowrocket.
+
+The agent uses capability discovery and private project context to determine the required Route Steward operations.
+
+## 3. Let the agent prepare and validate the route
+
+For a new setup, Route Steward creates a private state directory and records the required server, route, profile, and client state. Mutations pass preflight before execution.
+
+Remote deployment is followed by checks appropriate to the requested result. A real Route traffic check can be run with:
 
 ```text
-route-steward capabilities
-route-steward bootstrap --private-dir ./private
-route-steward context --private-dir ./private
-route-steward drift --private-dir ./private
+route-steward health --private-dir ./private --target <route-id>
 ```
 
-## 3. Prepare the first proxy
+For supported Mihomo/Clash Verge-compatible clients and Shadowrocket, Route Steward can generate private local configuration. Mihomo and Shadowrocket targets may also use an optional stable private subscription URL.
 
-The agent will ask for the facts declared by capability discovery:
+## 4. Continue from existing state
 
-- one dedicated, rebuildable Ubuntu 24.04 amd64 VPS for a direct route, or two for a relay;
-- each server's public address, valid Unix SSH username, and local private-key path;
-- whether you want a direct connection or a two-server relay;
-- the client you plan to use.
-
-Use non-identifying IDs such as `entry-a`, `route-a`, and `desktop-a`. Route Steward stores real operational values only in the selected private directory.
-
-See [Compatibility](COMPATIBILITY.md) for supported routes, port hopping, and clients. Initial server preparation changes host-wide settings, so use a dedicated, rebuildable host.
-
-## 4. Let the agent operate the workflow
+Ask the agent to inspect the relevant existing object before changing it. Route Steward supports focused reads:
 
 ```text
-capabilities → bootstrap when absent → context and drift
-→ create desired Server / Link / Route / Profile / ClientTarget objects
-→ preflight → execute → audit → render
+route-steward capabilities --operation <operation>
+route-steward context --private-dir ./private --target <object-id>
 ```
 
-Preflight returns missing facts, conflicts, expected effects, authorization class, and `ready`. The agent resolves those results before execution.
+Use full `capabilities` or `context` when the agent needs discovery across the project. Drift, audit, health, and migration status are read when current remote or historical evidence affects the requested operation.
 
-## 5. Verify the result
+Server replacement uses the resumable `migrate-route` workflow. Backup and recovery use a local 7-Zip password prompt.
 
-The agent should report the Route state, audit result, and client artifact path relative to the private root. Audit checks managed server configuration. This command tests real client traffic:
-
-```text
-route-steward health --private-dir ./private --target route-a
-```
-
-For a headless Hysteria2 target, use `route-steward proxy --private-dir ./private --target <id> --check`.
-
-For Clash Verge-compatible desktop use, a Mihomo ClientTarget can remain a private local file or use `publish-subscription` to create a stable private URL. Import that subscription once in the client; later Route Steward publications update the same URL. Route Steward does not change the client's TUN, system-proxy, active-profile, or selector settings.
-
-Returned results omit credentials, absolute local paths, Provider URLs, subscription tokens, node URIs, and raw SSH output. Generated client files remain inside the private root.
-
-## Later changes and recovery
-
-For an existing setup, ask the agent to inspect `context`, `drift`, and any migration checkpoint before making changes. `migrate-route` tests replacement capacity before switching client output and leaves retirement of the old capacity for a later user request.
-
-`route-steward backup` and `route-steward recover` use a local 7-Zip password prompt. See [Operations](../OPERATIONS.md) for command details and [Security](../SECURITY.md), [Privacy](PRIVACY.md), and the [operating boundary](OPERATING-BOUNDARY.md) before deployment.
+Current support is in [Compatibility](COMPATIBILITY.md). Command, state, host, migration, and recovery details are in [Operations](../OPERATIONS.md). Read [Security](../SECURITY.md), [Privacy](PRIVACY.md), and the [operating boundary](OPERATING-BOUNDARY.md) for trust and visibility rules.

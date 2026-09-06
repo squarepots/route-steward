@@ -2,42 +2,33 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md)
 
-[Quickstart](docs/QUICKSTART.md) · [FAQ](docs/FAQ.md) · [Compatibility](docs/COMPATIBILITY.md) · [Operating boundary](docs/OPERATING-BOUNDARY.md) · [Security](SECURITY.md) · [Releases](https://github.com/squarepots/route-steward/releases)
+[Quickstart](docs/QUICKSTART.md) · [FAQ](docs/FAQ.md) · [Compatibility](docs/COMPATIBILITY.md) · [Security](SECURITY.md) · [Releases](https://github.com/squarepots/route-steward/releases)
 
 [![Validation](https://github.com/squarepots/route-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/squarepots/route-steward/actions/workflows/ci.yml)
 
-**Set up and manage private proxies on your own servers with an AI agent.**
+**Set up and maintain private proxy routes on servers you control with an AI agent.**
 
-Give an AI agent this repository and describe the proxy you want. Route Steward supplies the commands, safety checks, server setup, client files, audits, and recovery workflow.
+Tell the agent which servers you have, how you want to use the routes, and which clients you use. Route Steward deploys the supported proxy path, verifies real traffic, and produces private configuration for clients such as Clash Verge and Shadowrocket.
 
 ## Give the URL to an AI agent
 
-Paste this into Codex or another agent that can read files and run local commands:
-
 ```text
-Open https://github.com/squarepots/route-steward and help me set up and manage a private proxy on servers I control. Read AGENTS.md and .agents/skills/route-steward/SKILL.md, use the Route Steward release for this computer, and begin with route-steward capabilities.
+Open https://github.com/squarepots/route-steward and use its Route Steward skill to set up or manage a private proxy on servers I control.
 ```
 
-See the [Quickstart](docs/QUICKSTART.md) for installation and prerequisites.
+See the [Quickstart](docs/QUICKSTART.md) for installation and first use.
 
-## What it gives you
+## What it manages
 
-- a private Hysteria2 proxy through one server or a two-server WireGuard relay;
-- optional port hopping for networks that throttle or filter individual UDP ports;
-- private client files for Mihomo/Clash Verge-compatible apps, Karing, Shadowrocket, and headless Hysteria2;
-- server audits, configuration drift reports, and real on-demand traffic checks;
-- resumable server replacement that tests the new path before switching clients;
-- encrypted local backups and recovery;
-- JSON commands through the CLI or local stdio MCP.
+- direct Hysteria2 routes and two-server WireGuard relays;
+- route health, drift inspection, and resumable server replacement;
+- private client configuration for supported desktop, mobile, and headless clients;
+- optional private subscription delivery for Mihomo/Clash Verge-compatible clients and Shadowrocket.
 
-The current server baseline is a dedicated, rebuildable Ubuntu 24.04 amd64 VPS with authorized SSH key access. Exact protocols, clients, topology, and optional delivery are listed in [Compatibility](docs/COMPATIBILITY.md).
+Current host, client, protocol, and delivery support is listed in [Compatibility](docs/COMPATIBILITY.md). Operational effects and recovery are documented in [Operations](OPERATIONS.md).
 
-## Host effects and privacy
+Private state, credentials, generated client files, and recovery material stay under the private directory you select. A cloud AI runtime may still process operation inputs it needs. See [Privacy](docs/PRIVACY.md) and [Security](SECURITY.md).
 
-Initial setup changes firewall, swap, SSH, sysctl, logging, updates, packages, and monitoring across the host. Use a dedicated, rebuildable server.
+Use servers, accounts, and network resources you own or are authorized to administer. See the [operating boundary](docs/OPERATING-BOUNDARY.md).
 
-Keys, operational state, generated client files, and recovery archives stay in the private directory you select and are excluded from Git. A cloud AI service may still receive the server details needed for an operation; use an offline runtime when those details must remain local.
-
-Use only servers, accounts, and network resources you own or are authorized to administer. Read [Operations](OPERATIONS.md), [Privacy](docs/PRIVACY.md), and [Security](SECURITY.md) before deployment.
-
-Route Steward is [AGPL-3.0-only](LICENSE). The vendored QR generator retains its MIT attribution in [client/vendor/NOTICE.md](client/vendor/NOTICE.md).
+Route Steward is [AGPL-3.0-only](LICENSE). Vendored notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [client/vendor/NOTICE.md](client/vendor/NOTICE.md).
