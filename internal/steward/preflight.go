@@ -412,8 +412,8 @@ func NewPreflight(operation, target string, state *State, context map[string]any
 	case "publish-subscription":
 		if target == "" {
 			missing = append(missing, "target-client-target")
-		} else if t := clientTarget(target); t == nil || t.Renderer != "shadowrocket" {
-			conflicts = append(conflicts, "target-client-target-not-shadowrocket")
+		} else if t := clientTarget(target); t == nil || (t.Renderer != "shadowrocket" && t.Renderer != "mihomo") {
+			conflicts = append(conflicts, "target-client-target-not-subscription-capable")
 		} else if t.SubscriptionSecretRef == "" {
 			if stringField(context, "worker_name") == "" {
 				missing = append(missing, "worker-name")
@@ -433,8 +433,8 @@ func NewPreflight(operation, target string, state *State, context map[string]any
 			missing = append(missing, "target-client-target")
 		} else if t := clientTarget(target); t == nil {
 			conflicts = append(conflicts, "target-client-target-missing")
-		} else if t.Renderer != "shadowrocket" {
-			conflicts = append(conflicts, "target-client-target-not-shadowrocket")
+		} else if t.Renderer != "shadowrocket" && t.Renderer != "mihomo" {
+			conflicts = append(conflicts, "target-client-target-not-subscription-capable")
 		} else if t.SubscriptionSecretRef == "" {
 			conflicts = append(conflicts, "client-target-has-no-subscription-state")
 		}

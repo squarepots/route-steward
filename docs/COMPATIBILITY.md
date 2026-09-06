@@ -12,7 +12,7 @@ This page lists support in the current release. Run `route-steward capabilities`
 | Ownership | Dedicated, rebuildable host with `compute.host_ownership=dedicated` |
 | SSH identity | Valid Unix username and local private-key path |
 
-Initial setup changes host-wide settings. See [Operations](../OPERATIONS.md#remote-ownership) for the exact effects and uninstall behavior.
+Initial setup installs the RST-required package, SSH key-only, and UFW baseline. See [Operations](../OPERATIONS.md#remote-ownership) for the exact effects and uninstall behavior.
 
 ## Network topology
 
@@ -42,7 +42,7 @@ Older schema-1 Profiles may contain `privacy`, `balanced-cn`, China-direct state
 
 | Capability | Supported behavior |
 | --- | --- |
-| Mihomo | Private YAML output for Mihomo/Clash Verge-compatible clients, with explicit `GLOBAL`/emergency selection, Provider `use` composition, ordered Profile routing, and optional target-scoped `PROCESS-NAME` routing; compatibility baseline Mihomo 1.19.27 |
+| Mihomo | Private YAML file or optional private subscription for Mihomo/Clash Verge-compatible clients, with explicit `GLOBAL`/emergency selection, Provider `use` composition, ordered Profile routing, and optional target-scoped `PROCESS-NAME` routing; compatibility baseline Mihomo 1.19.27 |
 | Karing | Private Clash YAML imported from a local file; compatibility baseline 1.2.23.2606; Windows, macOS, Linux, iOS, Android, and tvOS |
 | Shadowrocket offline | Private node-import HTML generated without external page resources |
 | Shadowrocket subscription | Optional isolated Cloudflare Worker delivery for one ClientTarget |
@@ -81,4 +81,4 @@ Audit covers RST services and configuration, firewall and network state, WireGua
 
 ## Optional Cloudflare delivery
 
-The Worker delivers a token-protected Shadowrocket subscription body for one isolated ClientTarget. The body is checked as UTF-8 and must be no larger than 5120 bytes. Subscription-token rotation is target-scoped, requires explicit current approval, and leaves Route and other ClientTarget credentials unchanged.
+The Worker delivers a token-protected Mihomo YAML or Shadowrocket node subscription for one isolated ClientTarget. Payloads are split into bounded Worker-secret chunks; the current RST limit is 240000 UTF-8 bytes. Mihomo responses include a YAML content type and a 24-hour subscription refresh hint. Subscription-token rotation is target-scoped, requires explicit current approval, and leaves Route and other ClientTarget credentials unchanged.

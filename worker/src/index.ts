@@ -1,15 +1,17 @@
 export interface SubscriptionEnv {
   SUBSCRIPTION_TOKEN_HASH?: string;
-  SUBSCRIPTION_BODY?: string;
+  SUBSCRIPTION_FORMAT?: string;
+  SUBSCRIPTION_CHUNK_COUNT?: string;
+  [key: string]: string | undefined;
 }
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
+const CHUNK_COUNT_PATTERN = /^(?:[1-9]|[1-5][0-9]|60)$/;
 const encoder = new TextEncoder();
 
 const privateHeaders = Object.freeze({
   "Cache-Control": "private, no-store, max-age=0",
-  "Content-Type": "text/plain; charset=utf-8",
   Expires: "0",
   Pragma: "no-cache",
   "Referrer-Policy": "no-referrer",
@@ -37,6 +39,31 @@ async function tokenMatches(token: string, expectedHash: string): Promise<boolea
   return crypto.subtle.timingSafeEqual(actual, expected);
 }
 
+function subscriptionBody(env: SubscriptionEnv): string | null {
+  const countText = env.SUBSCRIPTION_CHUNK_COUNT ?? "";
+  if (!CHUNK_COUNT_PATTERN.test(countText)) return null;
+  const count = Number.parseInt(countText, 10);
+  const chunks: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const chunk = env[`SUBSCRIPTION_BODY_${index.toString().padStart(2, "0")}`];
+    if (chunk === undefined) return null;
+    chunks.push(chunk);
+  }
+  const body = chunks.join("");
+  return body.length === 0 ? null : body;
+}
+
+function responseHeaders(format: string): HeadersInit {
+  if (format === "mihomo") {
+    return {
+      "Content-Type": "application/yaml; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="route-steward.yaml"',
+      "profile-update-interval": "24",
+    };
+  }
+  return { "Content-Type": "text/plain; charset=utf-8" };
+}
+
 export default {
   async fetch(request: Request, env: SubscriptionEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -46,8 +73,9 @@ export default {
     }
 
     const expectedHash = env.SUBSCRIPTION_TOKEN_HASH ?? "";
-    const body = env.SUBSCRIPTION_BODY ?? "";
-    if (!HASH_PATTERN.test(expectedHash) || body.length === 0) {
+    const format = env.SUBSCRIPTION_FORMAT ?? "";
+    const body = subscriptionBody(env);
+    if (!HASH_PATTERN.test(expectedHash) || (format !== "shadowrocket" && format !== "mihomo") || body === null) {
       return textResponse("Service Unavailable\n", 503);
     }
     if (!(await tokenMatches(match[1], expectedHash))) {
@@ -57,6 +85,6 @@ export default {
       return textResponse("Method Not Allowed\n", 405, { Allow: "GET, HEAD" });
     }
 
-    return textResponse(request.method === "HEAD" ? null : body, 200);
+    return textResponse(request.method === "HEAD" ? null : body, 200, responseHeaders(format));
   },
 } satisfies ExportedHandler<SubscriptionEnv>;

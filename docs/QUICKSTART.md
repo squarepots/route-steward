@@ -65,6 +65,8 @@ route-steward health --private-dir ./private --target route-a
 
 For a headless Hysteria2 target, use `route-steward proxy --private-dir ./private --target <id> --check`.
 
+For Clash Verge-compatible desktop use, a Mihomo ClientTarget can remain a private local file or use `publish-subscription` to create a stable private URL. Import that subscription once in the client; later Route Steward publications update the same URL. Route Steward does not change the client's TUN, system-proxy, active-profile, or selector settings.
+
 Returned results omit credentials, absolute local paths, Provider URLs, subscription tokens, node URIs, and raw SSH output. Generated client files remain inside the private root.
 
 ## Later changes and recovery

@@ -386,9 +386,16 @@ func ValidateInventory(inv *Inventory, privateDir string, skipSecrets bool) erro
 			}
 		}
 		switch t.Renderer {
-		case "mihomo", "karing":
+		case "mihomo":
+			if t.Delivery != "file" && t.Delivery != "subscription" {
+				failures = append(failures, fmt.Sprintf("Mihomo ClientTarget %q has invalid delivery", t.ID))
+			}
+			if (t.Delivery == "subscription") != (t.SubscriptionSecretRef != "") {
+				failures = append(failures, fmt.Sprintf("Mihomo ClientTarget %q has inconsistent subscription state", t.ID))
+			}
+		case "karing":
 			if t.Delivery != "file" || t.SubscriptionSecretRef != "" {
-				failures = append(failures, fmt.Sprintf("Clash-file ClientTarget %q has invalid delivery", t.ID))
+				failures = append(failures, fmt.Sprintf("Karing ClientTarget %q has invalid delivery", t.ID))
 			}
 		case "shadowrocket":
 			if t.Delivery != "nodes" && t.Delivery != "subscription" {

@@ -3,6 +3,7 @@ package steward
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,13 +137,13 @@ func TestGoControlPlaneLifecycle(t *testing.T) {
 			t.Fatalf("sanitized context leaked %q", secret)
 		}
 	}
-	if size, err := AssertSubscriptionBodySize(strings.Repeat("a", 5120)); err != nil || size != 5120 {
-		t.Fatal("5120-byte subscription body was rejected")
+	if size, err := AssertSubscriptionBodySize(strings.Repeat("a", subscriptionSecretChunkBytes*subscriptionMaxChunks)); err != nil || size != subscriptionSecretChunkBytes*subscriptionMaxChunks {
+		t.Fatal("maximum chunked subscription body was rejected")
 	}
-	if size, err := AssertSubscriptionBodySize(strings.Repeat("é", 2560)); err != nil || size != 5120 {
+	if size, err := AssertSubscriptionBodySize(strings.Repeat("é", subscriptionSecretChunkBytes*subscriptionMaxChunks/2)); err != nil || size != subscriptionSecretChunkBytes*subscriptionMaxChunks {
 		t.Fatal("multibyte subscription body was miscounted")
 	}
-	if _, err := AssertSubscriptionBodySize(strings.Repeat("a", 5121)); err == nil || err.Error() != "subscription-payload-too-large" {
+	if _, err := AssertSubscriptionBodySize(strings.Repeat("a", subscriptionSecretChunkBytes*subscriptionMaxChunks+1)); err == nil || err.Error() != "subscription-payload-too-large" {
 		t.Fatal("oversize subscription body was accepted")
 	}
 }
@@ -709,4 +710,24 @@ func contextBackground() context.Context { return context.Background() }
 
 func bytesContains(value, fragment []byte) bool {
 	return strings.Contains(string(value), string(fragment))
+}
+
+func TestExecuteReadyReportsSafePartialFailureStage(t *testing.T) {
+	err := &operationStageError{Stage: "client-delivery", StateChanged: "route-deployed", Retry: "render-client", Err: errors.New("secret-bearing synthetic detail")}
+	request := Request{Operation: "deploy-route"}
+	fail := func(err error) map[string]any {
+		data := map[string]any{"summary": safeFailureSummary, "operation": request.Operation}
+		var staged *operationStageError
+		if errors.As(err, &staged) {
+			data["stage"] = staged.Stage
+			data["state_changed"] = staged.StateChanged
+			data["retry"] = staged.Retry
+		}
+		return data
+	}
+	data := fail(err)
+	encoded, _ := json.Marshal(data)
+	if strings.Contains(string(encoded), "synthetic detail") || data["stage"] != "client-delivery" || data["retry"] != "render-client" {
+		t.Fatalf("safe staged failure metadata changed: %s", encoded)
+	}
 }

@@ -100,7 +100,7 @@ A Route may use a 2–8-port Hysteria UDP hopping range. Inventory, deployment, 
 
 A renderer resolves a ClientTarget, its Profile, the selected Routes, and optional Providers.
 
-- Mihomo ClientTargets use file delivery and may compose managed Routes with explicitly selected generic Providers. Optional `PROCESS-NAME` routing stays on the Mihomo ClientTarget and renders a manual `DIRECT` / Profile-route selection group.
+- Mihomo ClientTargets use private file or optional private-subscription delivery and may compose managed Routes with explicitly selected generic Providers. Optional `PROCESS-NAME` routing stays on the Mihomo ClientTarget and renders a manual `DIRECT` / Profile-route selection group.
 - Karing ClientTargets use tested private Clash YAML and retain SHA-256 certificate pinning for every managed Hysteria2 node.
 - Shadowrocket ClientTargets render private Hysteria2 node imports or use optional target-scoped subscription delivery.
 - Hysteria2 ClientTargets select one enabled Route, render official-client JSON, and expose HTTP/SOCKS5 on an IP-literal loopback listener.
@@ -115,11 +115,11 @@ The `proxy` command renders a Hysteria2 target and uses the same pinned official
 
 ## Private subscription delivery
 
-The optional Worker publishes one private Shadowrocket subscription:
+The optional Worker publishes one private Mihomo or Shadowrocket subscription:
 
 ```text
 ClientTarget + Profile + Route state
-  → local Shadowrocket URI export
+  → renderer-specific Mihomo YAML or Shadowrocket node export
   → subscription body + token hash as Worker secrets
   → isolated token-protected HTTPS endpoint
   → Shadowrocket refresh
