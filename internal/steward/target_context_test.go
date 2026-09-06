@@ -31,67 +31,61 @@ func TestFocusedCapabilitiesReturnOneOperation(t *testing.T) {
 	}
 }
 
-func TestTargetedContextReturnsOnlyRelevantRelationships(t *testing.T) {
-	state, route := healthFixture(t, "direct", false)
-	if _, err := AddProfile(state, map[string]any{
-		"profile_id":     "primary",
-		"include_routes": []any{route.ID},
-		"routing": map[string]any{"rules": []any{
-			map[string]any{
-				"match":  map[string]any{"type": "domain_suffix", "value": "example.invalid"},
-				"action": map[string]any{"type": "direct"},
-			},
-		}},
-	}); err != nil {
+func TestTargetedContextProjectsEachObjectKind(t *testing.T) {
+	state, route := healthFixture(t, "relay", false)
+	if _, err := AddProvider(state, map[string]any{"provider_id": "optional-a", "url": "https://provider.example.invalid/list.yaml"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddProfile(state, map[string]any{
-		"profile_id":     "unrelated",
-		"include_routes": []any{},
-		"routing": map[string]any{"rules": []any{
-			map[string]any{
-				"match":  map[string]any{"type": "domain_suffix", "value": "unrelated.example.invalid"},
-				"action": map[string]any{"type": "direct"},
-			},
-		}},
-	}); err != nil {
+	if _, err := AddProfile(state, map[string]any{"profile_id": "primary", "include_routes": []any{route.ID}, "include_providers": []any{"optional-a"}, "routing": map[string]any{"rules": []any{map[string]any{"match": map[string]any{"type": "domain_suffix", "value": "example.invalid"}, "action": map[string]any{"type": "direct"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddProfile(state, map[string]any{"profile_id": "unrelated", "include_routes": []any{}, "routing": map[string]any{"rules": []any{map[string]any{"match": map[string]any{"type": "domain_suffix", "value": "unrelated.example.invalid"}, "action": map[string]any{"type": "direct"}}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AddClientTarget(state, map[string]any{"target_id": "desktop", "profile_id": "primary", "renderer": "mihomo"}); err != nil {
 		t.Fatal(err)
 	}
 
-	result, code := SanitizedTargetContext(state.Inventory, route.ID)
-	if code != "" {
-		t.Fatalf("route context failed: %s %#v", code, result)
-	}
-	if result["kind"] != "route" {
-		t.Fatalf("route context has wrong kind: %#v", result)
-	}
-	profiles := result["profiles"].([]string)
-	if len(profiles) != 1 || profiles[0] != "primary" {
-		t.Fatalf("route context exposed the wrong profiles: %#v", profiles)
-	}
-	targets := result["client_targets"].([]string)
-	if len(targets) != 1 || targets[0] != "desktop" {
-		t.Fatalf("route context exposed the wrong client targets: %#v", targets)
-	}
-	if _, exists := result["routing"]; exists {
-		t.Fatal("route context expanded profile routing")
+	serverResult := mustTargetContext(t, state.Inventory, "entry-a", "server")
+	assertStringSet(t, serverResult["links"], "link-a")
+	assertStringSet(t, serverResult["routes"], route.ID)
+
+	linkResult := mustTargetContext(t, state.Inventory, "link-a", "link")
+	assertStringSet(t, linkResult["routes"], route.ID)
+	link := linkResult["link"].(map[string]any)
+	if link["entry_server"] != "entry-a" || link["exit_server"] != "exit-b" {
+		t.Fatalf("link context lost its server relationships: %#v", link)
 	}
 
-	profileResult, code := SanitizedTargetContext(state.Inventory, "primary")
-	if code != "" {
-		t.Fatalf("profile context failed: %s %#v", code, profileResult)
+	routeResult := mustTargetContext(t, state.Inventory, route.ID, "route")
+	assertStringSet(t, routeResult["profiles"], "primary")
+	assertStringSet(t, routeResult["client_targets"], "desktop")
+	if _, exists := routeResult["routing"]; exists {
+		t.Fatal("route context expanded profile routing")
 	}
-	profile, ok := profileResult["profile"].(map[string]any)
-	if !ok {
-		t.Fatalf("profile context has unexpected shape: %#v", profileResult)
+	if _, exists := routeResult["counts"]; exists {
+		t.Fatal("route context included the full project summary")
 	}
+
+	providerResult := mustTargetContext(t, state.Inventory, "optional-a", "provider")
+	assertStringSet(t, providerResult["profiles"], "primary")
+
+	profileResult := mustTargetContext(t, state.Inventory, "primary", "profile")
+	profile := profileResult["profile"].(map[string]any)
 	routing := profile["routing"].(map[string]any)
 	rules := routing["rules"].([]map[string]any)
 	if len(rules) != 1 {
-		t.Fatalf("profile context did not include its routing intent: %#v", profile)
+		t.Fatalf("profile context did not include its own routing intent: %#v", profile)
+	}
+	assertStringSet(t, profileResult["client_targets"], "desktop")
+
+	clientResult := mustTargetContext(t, state.Inventory, "desktop", "client_target")
+	client := clientResult["client_target"].(map[string]any)
+	if client["profile"] != "primary" || client["renderer"] != "mihomo" {
+		t.Fatalf("client target context lost its direct configuration: %#v", client)
+	}
+	if _, exists := clientResult["routing"]; exists {
+		t.Fatal("client target context expanded profile routing")
 	}
 }
 
@@ -104,13 +98,38 @@ func TestTargetedContextFailsClosedOnAmbiguousIDs(t *testing.T) {
 	if code != "context-target-ambiguous" {
 		t.Fatalf("ambiguous context returned %q: %#v", code, result)
 	}
-	candidates := result["candidates"].([]string)
-	if len(candidates) != 2 || candidates[0] != "profile" || candidates[1] != "route" {
-		t.Fatalf("ambiguous context returned unexpected candidates: %#v", candidates)
-	}
+	assertStringSet(t, result["candidates"], "profile", "route")
 
 	missing, code := SanitizedTargetContext(state.Inventory, "missing")
 	if code != "context-target-not-found" || missing["target"] != "missing" {
 		t.Fatalf("missing context target did not fail clearly: %q %#v", code, missing)
+	}
+}
+
+func mustTargetContext(t *testing.T, inv *Inventory, target, kind string) map[string]any {
+	t.Helper()
+	result, code := SanitizedTargetContext(inv, target)
+	if code != "" {
+		t.Fatalf("target context %s failed: %s %#v", target, code, result)
+	}
+	if result["kind"] != kind {
+		t.Fatalf("target context %s has kind %#v, want %s", target, result["kind"], kind)
+	}
+	return result
+}
+
+func assertStringSet(t *testing.T, value any, wanted ...string) {
+	t.Helper()
+	values, ok := value.([]string)
+	if !ok {
+		t.Fatalf("value has unexpected string-set shape: %#v", value)
+	}
+	if len(values) != len(wanted) {
+		t.Fatalf("string set %#v has length %d, want %#v", values, len(values), wanted)
+	}
+	for i := range wanted {
+		if values[i] != wanted[i] {
+			t.Fatalf("string set %#v, want %#v", values, wanted)
+		}
 	}
 }

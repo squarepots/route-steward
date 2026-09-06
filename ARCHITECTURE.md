@@ -1,6 +1,6 @@
 # Architecture
 
-Route Steward turns an agent's instructions into local state, server changes, and private client files.
+Route Steward turns an agent's instructions into private desired state, validated infrastructure changes, and client configuration.
 
 ```text
 User request
@@ -18,134 +18,127 @@ Go engine
     └─ migration and recovery
 ```
 
-All supported agent runtimes call the same executable and Go engine.
+The CLI and MCP surface call the same Go engine. Current supported drivers, renderers, limits, and platform baselines come from `route-steward capabilities`; [Compatibility](docs/COMPATIBILITY.md) is the readable projection of that support.
 
-## Product objects and drivers
+## Product objects
 
-- **Server** — bring-your-own Linux compute reached over SSH. Driver: `byo-ssh`.
-- **Link** — connection between two Servers. Driver: single-hop `wireguard`.
-- **Route** — logical network path offered to ClientTargets. A `direct` Route uses one Server; a `relay` Route references ingress Server, egress Server, and Link. Initial ingress driver: `hysteria2`.
-- **Provider** — optional upstream third-party node source. Initial source type: generic `mihomo-http`.
+- **Server** — compute the operator is authorized to administer.
+- **Link** — a managed connection between two Servers.
+- **Route** — a direct or relay proxy path. A direct Route uses one Server; a relay Route references an entry Server, exit Server, and Link.
+- **Provider** — an optional external node source referenced by Profiles.
 - **Profile** — reusable Route and Provider selection with ordered generic routing.
-- **ClientTarget** — renderer and delivery settings for one Profile. Renderers: `mihomo`, `karing`, `shadowrocket`, and `hysteria2`.
-- **Private subscription** — delivery state for one Mihomo or Shadowrocket ClientTarget.
+- **ClientTarget** — renderer and delivery settings for one Profile.
+- **Private subscription** — delivery state owned by one subscription-backed ClientTarget.
+
+These objects describe user intent and stable relationships. Protocol and client support stay in capability metadata instead of being duplicated here.
 
 ## State layers
 
 ```text
 <private>/inventory.json    desired infrastructure and client state
 <private>/secrets/          credentials, keys, URLs, and subscription state
-<private>/observed.json     sanitized audit and health results
+<private>/observed.json     sanitized audit and health evidence
 <private>/delivery/         generated client files and render hashes
 <private>/migrations.json   resumable migration state
 <private>/recovery/         encrypted recovery artifacts
 ```
 
-`<private>` is an ignored local directory or an external path supplied through `--private-dir`. Inventory and secrets supply operation inputs. Audit, health, and render evidence can be regenerated.
+`<private>` is an ignored local directory or an external path supplied through `--private-dir`. Inventory and secrets are canonical operation inputs. Audit, health, and render evidence can be regenerated.
 
 ## State compatibility
 
-Inventory schema `2` stores Servers, Links, Routes, Providers, Profiles, and ClientTargets. Schema-1 state is translated at load time; legacy policy and China/service fields are not current state. Product SemVer is stored separately in `version.txt`.
+Inventory schema 2 stores Servers, Links, Routes, Providers, Profiles, and ClientTargets. Schema-1 inventory is translated at load time. Legacy policy and regional/service routing fields are compatibility input and are not current state. Product SemVer is stored separately in `version.txt`.
+
+Auxiliary state formats keep their own schema versions. A format version is changed only when that format changes.
 
 ## Neutral bootstrap
 
-Bootstrap creates empty schema-2 inventory, secret index, observed state, and private output directories. The agent adds objects after gathering the user's setup.
+Bootstrap creates empty current inventory, secret index, observed state, and private output directories. It does not create a topology, Profile, or client choice for the user.
 
 ## Preflight
 
-Each mutation combines the requested intent with discovered context:
+Each mutation combines requested intent with the relevant current context:
 
 ```text
-intent + discovered context
+intent + relevant context
         ↓
 preflight
   ├─ capability supported?
-  ├─ state schema current?
+  ├─ state format current?
   ├─ target unambiguous?
-  ├─ required local state/secrets/access present?
-  ├─ dependencies/conflicts known?
+  ├─ required state, secrets, and access present?
+  ├─ dependencies and conflicts known?
   ├─ expected effects known?
-  └─ authorization class satisfied?
+  └─ authorization satisfied?
         ↓
 ready=true → execution
 ready=false → gather context / ask human / stop
 ```
 
-The Go engine returns missing context, conflicts, expected effects, authorization class, and readiness for each requested operation.
+The Go engine returns missing context, conflicts, expected effects, authorization class, and readiness. Mutations do not bypass this gate.
+
+## Agent context surface
+
+Full `capabilities` is discovery for an unknown task. `capabilities --operation <id>` returns one operation contract when the operation is already known.
+
+Full `context` is a sanitized project view. `context --target <id>` returns one object and the direct relationships needed to reason about it. A focused Route view can name the Profiles and ClientTargets that consume it without expanding unrelated Profile routing rules. A focused Profile view includes its routing intent because those rules belong to that Profile.
+
+Target IDs may be reused across object kinds. A focused lookup with multiple matches fails with candidate kinds rather than choosing one.
+
+The context surface omits credentials, server addresses, local key paths, Provider URLs, subscription URLs and tokens, raw diagnostics, generated configuration, and concrete Mihomo process names. [Privacy](docs/PRIVACY.md) owns the model-visible data policy.
 
 ## Agent interfaces
 
-The Go `route-steward` executable provides the CLI and local stdio MCP server on Linux, macOS, and Windows for amd64 and arm64. Both interfaces use the same engine. System OpenSSH provides transport, and embedded `server/*.sh` files implement remote changes. The PowerShell entry point forwards older callers.
+The native executable provides the CLI and local stdio MCP server. Both carry the same machine envelope and call the same engine. The PowerShell agent entry point is a compatibility forwarder to the native executable.
 
-Private structured context can be passed over stdin. Subscription-token rotation uses its dedicated command and approval path.
+Private structured operation context can be passed over stdin. Operations that require a local secret prompt use their dedicated local workflow.
 
 ## Network model
 
-Initial supported topology:
-
 ```text
 direct:
-client → Hysteria2 entry/exit Server → declared exit
+client → proxy entry/exit Server → declared exit
 
 relay:
-client → Hysteria2 entry Server → WireGuard Link → exit Server/NAT → declared exit
+client → proxy entry Server → managed Link → exit Server → declared exit
 ```
 
-Each Link receives an RST-named interface, UDP port, and subnet. Deployment and uninstall manage RST-owned resources and named policy files. Initial host preparation installs only the RST-required package, SSH, and firewall baseline documented in [Operations](OPERATIONS.md#remote-ownership). Supported hosts remain dedicated and rebuildable until broader host sharing is proven.
+Deployment manages resources owned by Route Steward for the selected Route and Link. Exact host prerequisites, preparation effects, uninstall ownership, and command behavior are documented in [Operations](OPERATIONS.md). Current host, protocol, and topology support is documented in [Compatibility](docs/COMPATIBILITY.md).
 
-A Route may use a 2–8-port Hysteria UDP hopping range. Inventory, deployment, audit, client rendering, and migration all carry that range. A relay-exit replacement reserves a same-width, non-overlapping range while both paths are live.
+## Client rendering
 
-## ClientTarget rendering
+A renderer resolves a ClientTarget, its Profile, selected Routes, optional Providers, and the secrets needed to produce the target artifact. Output is generated inside the private root.
 
-A renderer resolves a ClientTarget, its Profile, the selected Routes, and optional Providers.
+Profiles own ordered generic routing rules. Renderer-specific settings stay on the ClientTarget. Client applications continue to own runtime choices such as active profile, selector state, TUN, and system proxy unless an implemented operation explicitly says otherwise.
 
-- Mihomo ClientTargets use private file or optional private-subscription delivery and may compose managed Routes with explicitly selected generic Providers. Optional `PROCESS-NAME` routing stays on the Mihomo ClientTarget and renders a manual `DIRECT` / Profile-route selection group.
-- Karing ClientTargets use tested private Clash YAML and retain SHA-256 certificate pinning for every managed Hysteria2 node.
-- Shadowrocket ClientTargets render private Hysteria2 node imports or use optional target-scoped subscription delivery.
-- Hysteria2 ClientTargets select one enabled Route, render official-client JSON, and expose HTTP/SOCKS5 on an IP-literal loopback listener.
+Rendering builds and validates candidate output before replacing an existing artifact. Successful output records a target-scoped hash manifest used to detect missing or stale delivery artifacts.
 
-Hopping Routes use Hysteria's multi-port endpoint in every renderer. The headless client uses a 30-second UDP hop interval.
-
-Output filenames derive from ClientTarget IDs. Profiles store ordered `routing.rules`. A rule matches `domain_suffix`, `geosite`, or `geoip` and sends matching traffic either directly or through an enabled Route included by the Profile. Schema-1 policy, China-direct, and service bindings are translated when old state is loaded and are not canonical schema-2 fields.
-
-Successful rendering records a hash-only manifest. Missing or outdated output becomes `client-render-stale`.
-
-The `proxy` command renders a Hysteria2 target and uses the same pinned official client as Route health. Check mode sends a real HTTP request through the declared Route; run mode stays in the foreground.
+The headless client path and Route health use the supported client runtime through the same pinned identity rules. Exact renderer behavior and current client baselines belong to capability metadata and Compatibility.
 
 ## Private subscription delivery
 
-The optional Worker publishes one private Mihomo or Shadowrocket subscription:
+Optional subscription delivery publishes the rendered body for one eligible ClientTarget through its configured publisher:
 
 ```text
 ClientTarget + Profile + Route state
-  → renderer-specific Mihomo YAML or Shadowrocket node export
-  → bounded subscription body chunks + token hash as Worker secrets
-  → isolated token-protected HTTPS endpoint
-  → Clash Verge-compatible or Shadowrocket subscription refresh
+  → renderer-specific subscription body
+  → target-owned publication state and credential
+  → private HTTPS endpoint
+  → client refresh
 ```
 
-Subscription state belongs to one ClientTarget. Different subscription-backed ClientTargets cannot share the same Worker identity or host in the current single-body design.
+Publication state and credentials belong to one ClientTarget. A publication result distinguishes rendered content, external publication, and later client refresh where the client runtime cannot be observed directly.
 
-Token rotation is recoverable and changes one ClientTarget. The Worker stores bounded subscription-body chunks and the token hash as secrets and serves the configuration from a non-cacheable HTTPS endpoint.
+## Desired, observed, and drift
 
-## Desired / observed / drift
+Inventory represents desired state. Audit and health read current remote behavior and store timestamped sanitized evidence. Drift compares desired state with that evidence and with generated client artifacts.
 
-Audit compares remote state with inventory and stores sanitized evidence in `observed.json`. Raw SSH and server diagnostics stay local.
-
-Current drift taxonomy distinguishes RST service absence, remote configuration mismatch, firewall/network mismatch, WireGuard mismatch, Hysteria2 listener mismatch, certificate mismatch, egress mismatch, stale/missing ClientTarget renders, and undetermined state.
-
-An already-deployed Route is audited before another deployment. Drifted or undetermined state must be investigated first.
+Observed evidence is historical after it is recorded. Decisions that require current remote truth use a fresh audit or health check instead of treating an old green record as current reality.
 
 ## Migration and recovery
 
-Infrastructure migration keeps the current Route available while replacement capacity is tested:
+Route replacement is a resumable transaction. Replacement capacity is created and validated while the current Route remains available. Client selection changes only after the replacement passes the required checks. Old capacity remains available until retirement is separately authorized.
 
-1. add replacement desired capacity;
-2. deploy it while the current Route remains working;
-3. audit the replacement;
-4. render/update client delivery;
-5. leave old capacity available until the user requests retirement.
+Recovery verifies the encrypted archive, restores canonical private state, relocates private paths where required, and resets regenerable observed evidence. Restored infrastructure is audited before later remote mutation.
 
-Recovery verifies the encrypted archive manifest and paths, relocates private SSH material, validates current state, and resets observed evidence. The user decides any later remote change through the usual preflight.
-
-See `docs/COMPATIBILITY.md` for current support and `SECURITY.md` / `docs/THREAT-MODEL.md` for security boundaries.
+Operational phases and recovery commands belong to [Operations](OPERATIONS.md). Security boundaries and compromise response belong to [Security](SECURITY.md) and the [Threat Model](docs/THREAT-MODEL.md).
