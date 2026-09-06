@@ -36,29 +36,10 @@ func TestTargetedContextProjectsEachObjectKind(t *testing.T) {
 	if _, err := AddProvider(state, map[string]any{"provider_id": "optional-a", "url": "https://provider.example.invalid/list.yaml"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddProfile(state, map[string]any{
-		"profile_id":       "primary",
-		"include_routes":   []any{route.ID},
-		"include_providers": []any{"optional-a"},
-		"routing": map[string]any{"rules": []any{
-			map[string]any{
-				"match":  map[string]any{"type": "domain_suffix", "value": "example.invalid"},
-				"action": map[string]any{"type": "direct"},
-			},
-		}},
-	}); err != nil {
+	if _, err := AddProfile(state, map[string]any{"profile_id": "primary", "include_routes": []any{route.ID}, "include_providers": []any{"optional-a"}, "routing": map[string]any{"rules": []any{map[string]any{"match": map[string]any{"type": "domain_suffix", "value": "example.invalid"}, "action": map[string]any{"type": "direct"}}}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddProfile(state, map[string]any{
-		"profile_id":     "unrelated",
-		"include_routes": []any{},
-		"routing": map[string]any{"rules": []any{
-			map[string]any{
-				"match":  map[string]any{"type": "domain_suffix", "value": "unrelated.example.invalid"},
-				"action": map[string]any{"type": "direct"},
-			},
-		}},
-	}); err != nil {
+	if _, err := AddProfile(state, map[string]any{"profile_id": "unrelated", "include_routes": []any{}, "routing": map[string]any{"rules": []any{map[string]any{"match": map[string]any{"type": "domain_suffix", "value": "unrelated.example.invalid"}, "action": map[string]any{"type": "direct"}}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AddClientTarget(state, map[string]any{"target_id": "desktop", "profile_id": "primary", "renderer": "mihomo"}); err != nil {
