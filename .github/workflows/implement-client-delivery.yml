@@ -1,0 +1,61 @@
+name: implement client delivery
+on:
+  push:
+    branches: [work/lifecycle-review-tools]
+permissions:
+  contents: write
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: work/lifecycle-review-tools
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: 1.27.0
+          cache: true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Apply client delivery changes
+        run: python3 .github/implement-client-delivery.py
+      - name: Bump product version
+        shell: pwsh
+        run: ./scripts/Bump-Version.ps1 -Type minor
+      - name: Validate native code
+        shell: bash
+        run: |
+          set -euo pipefail
+          gofmt -w internal/steward
+          go mod verify
+          go test ./... -timeout 180s
+          go vet ./...
+          git diff --check
+      - name: Validate Worker
+        working-directory: worker
+        run: |
+          npm ci --no-audit --no-fund
+          npm run types
+          npm run typecheck
+          npm test
+          npm run deploy:dry-run
+      - name: Repository contract checks
+        shell: pwsh
+        run: |
+          ./scripts/Check-NoSecrets.ps1
+          ./scripts/Test-Templates.ps1
+          ./tests/Test-Version.ps1
+          ./tests/Test-Agent.ps1
+      - name: Remove temporary harness and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/implement-client-delivery.py .github/workflows/implement-client-delivery.yml
+          git add -A
+          git config user.name squarepots
+          git config user.email 46488165+squarepots@users.noreply.github.com
+          git commit -s -m "Add private Mihomo subscription delivery"
+          git push origin HEAD:work/lifecycle-review-tools
