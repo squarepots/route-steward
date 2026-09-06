@@ -21,7 +21,9 @@ jobs:
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - name: Apply client delivery changes
-        run: python3 .github/implement-client-delivery.py
+        run: |
+          python3 .github/implement-client-delivery.py
+          python3 .github/fix-client-delivery.py
       - name: Bump product version
         shell: pwsh
         run: ./scripts/Bump-Version.ps1 -Type minor
@@ -53,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/implement-client-delivery.py .github/workflows/implement-client-delivery.yml
+          rm -f .github/implement-client-delivery.py .github/fix-client-delivery.py .github/workflows/implement-client-delivery.yml
           git add -A
           git config user.name squarepots
           git config user.email 46488165+squarepots@users.noreply.github.com
