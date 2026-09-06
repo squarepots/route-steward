@@ -342,7 +342,7 @@ func AddProfile(state *State, context map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	profile := Profile{ID: id, Policy: stringField(context, "policy"), IncludeRoutes: stringSliceField(context, "include_routes", []string{"*"}), IncludeProviders: stringSliceField(context, "include_providers", []string{})}
+	profile := Profile{ID: id, IncludeRoutes: stringSliceField(context, "include_routes", []string{"*"}), IncludeProviders: stringSliceField(context, "include_providers", []string{})}
 	if hasRouting {
 		profile.Routing = routing
 	} else if !hasField(context, "policy") {
@@ -362,16 +362,13 @@ func UpdateProfile(state *State, target string, context map[string]any) (map[str
 	if profile == nil {
 		return nil, fmt.Errorf("unknown Profile %q", target)
 	}
-	if hasField(context, "policy") {
-		profile.Policy = stringField(context, "policy")
-	}
 	if hasField(context, "include_routes") {
 		profile.IncludeRoutes = stringSliceField(context, "include_routes", nil)
 	}
 	if hasField(context, "include_providers") {
 		profile.IncludeProviders = stringSliceField(context, "include_providers", nil)
 	}
-	if hasField(context, "routing") {
+	if hasField(context, "routing") || hasField(context, "policy") {
 		routing, _, err := profileRoutingFromContext(context)
 		if err != nil {
 			return nil, err

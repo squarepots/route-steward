@@ -111,9 +111,9 @@ Profiles store Route and Provider selection plus ordered generic routing rules. 
 
 Route deployment runs the embedded server scripts and keeps lower-level output out of the JSON response.
 
-RST owns its `/usr/local/lib/route-steward`, `/etc/route-steward`, `/var/lib/route-steward`, `route-steward-*` systemd units, `route-steward-hysteria` runtime user, `wg-rst*` Link interfaces, generated files, and individually named policy files. The initial host preparation also changes global UFW defaults, swap/fstab, SMTP egress, SSH/sysctl/journald, package, unattended-upgrades, and vnstat state.
+RST owns its `/usr/local/lib/route-steward`, `/etc/route-steward`, `/var/lib/route-steward`, `route-steward-*` systemd units, `route-steward-hysteria` runtime user, `wg-rst*` Link interfaces, generated files, and individually named policy files. Initial host preparation installs the RST-required package set, an RST-named SSH key-only drop-in, and a UFW baseline. A host marker makes that preparation one-time for current releases.
 
-Use a dedicated, rebuildable Ubuntu 24.04 amd64 host. Deployment and uninstall leave unrelated Xray, Hysteria, WireGuard, service, package, and firewall state in place. Uninstall removes RST-owned artifacts and named policy files. It cannot reconstruct earlier UFW defaults, swap/fstab, packages, or global host settings.
+Use a dedicated, rebuildable Ubuntu 24.04 amd64 host. Deployment and uninstall leave unrelated Xray, Hysteria, WireGuard, service, package, and firewall state in place. Older Route Steward releases may already have changed swap/fstab, SMTP egress, sysctl/BBR, journald, unattended-upgrades, or vnstat; current deployment does not recreate those settings and does not automatically reverse them.
 
 An already-deployed Route is audited before another deployment. Drifted or undetermined state blocks the operation until the discrepancy is understood.
 
@@ -139,7 +139,7 @@ Renderers consume a ClientTarget plus its referenced Profile.
 
 Current renderers:
 
-- `mihomo` — private Hysteria2 Routes plus zero or more explicitly included generic Providers, with optional target-scoped process-name rules;
+- `mihomo` — private Hysteria2 Routes plus zero or more explicitly included generic Providers, with file or optional private-subscription delivery and optional target-scoped process-name rules;
 - `karing` — private Clash YAML tested with Karing 1.2.23.2606 and Hysteria2 certificate pinning;
 - `shadowrocket` — offline node import or target-scoped private subscription import;
 - `hysteria2` — official-client JSON for one explicitly selected managed Route, with HTTP and SOCKS5 sharing one loopback listener.
@@ -158,7 +158,7 @@ New renderer support requires implementation and tests in Route Steward.
 
 ## Private subscription
 
-Subscription state belongs to one ClientTarget. Publication resolves one Shadowrocket target, uses its Worker/host identity and bearer token, exports the current node list, validates and deploys the Worker, verifies the endpoint, and rebuilds local render state.
+Subscription state belongs to one ClientTarget. Publication accepts a Mihomo or Shadowrocket target, uses its Worker/host identity and bearer token, exports the renderer-specific configuration, deploys the Worker, and verifies that the endpoint returns the exact generated body. Mihomo publication also writes a private subscription-reference artifact for one-time import into a Clash Verge-compatible client; later publication updates the same URL.
 
 Token rotation is a `credential-change`, requires explicit current approval, and recovers interrupted publication through a local pending token. It changes only the selected ClientTarget and has a dedicated command outside generic MCP execution.
 
@@ -183,7 +183,7 @@ Migration records each stage in private state:
 
 ## Backup and recovery
 
-Backup creates an encrypted archive containing canonical schema-2 inventory, active migration checkpoints, required SSH material, and auxiliary private state. The password is entered through a local 7-Zip prompt.
+Backup creates an encrypted archive containing canonical schema-2 inventory, secrets, active migration checkpoints, and required SSH material. Regenerable observed evidence is not included in new archives. The password is entered through a local 7-Zip prompt.
 
 Recovery restores to a clean private root, verifies the SHA-256 manifest, rejects unsafe paths and symlinks, translates supported schema-1 inventory when needed, relocates SSH material, validates current inventory, and resets observed evidence. Restored migrations are marked `recovery-revalidation-required` and repeat deployment and health checks.
 

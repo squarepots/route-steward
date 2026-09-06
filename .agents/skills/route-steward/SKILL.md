@@ -35,7 +35,7 @@ Representative calls are in [references/operations.md](references/operations.md)
 
 Capability discovery defines the currently implemented operations, drivers, and renderers. See `docs/COMPATIBILITY.md` for the readable support matrix.
 
-Host preparation changes UFW, swap/fstab, SMTP egress, SSH, sysctl, journald, packages, unattended upgrades, and vnstat. Use a dedicated, rebuildable host.
+Host preparation installs the RST-required package set, SSH key-only policy, and UFW baseline. Use a dedicated, rebuildable host.
 
 ## Operating rules
 
@@ -45,7 +45,7 @@ Investigate drifted or undetermined remote state before deployment. A drift repo
 
 The generated files support Mihomo/Clash Verge-compatible clients, Karing, Shadowrocket, and a headless Hysteria2 runtime as listed by `capabilities`. Client details are in [references/clients.md](references/clients.md).
 
-Subscription-token rotation changes one Shadowrocket ClientTarget credential. It requires explicit current approval and is excluded from generic MCP execution.
+Subscription-token rotation changes one subscription-backed ClientTarget credential. It requires explicit current approval and is excluded from generic MCP execution.
 
 Server replacement and recovery procedures are in [references/migration-recovery.md](references/migration-recovery.md).
 

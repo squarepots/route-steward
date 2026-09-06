@@ -41,7 +41,6 @@ func NewCleanInventory(privateDir string) *Inventory {
 			RecoveryDirectory: filepath.Join(privateDir, "recovery"),
 		},
 		Servers: []Server{}, Links: []Link{}, Routes: []Route{}, Providers: []Provider{},
-		Policies: []Policy{},
 		Profiles: []Profile{}, ClientTargets: []ClientTarget{},
 	}
 }
@@ -78,7 +77,7 @@ func Bootstrap(privateDir string) (*State, bool, error) {
 	if err := protectPath(filepath.Join(root, "secrets"), true); err != nil {
 		return nil, false, err
 	}
-	index := SecretIndex{Schema: InventorySchema, Refs: map[string]SecretRef{}}
+	index := SecretIndex{Schema: SecretIndexSchema, Refs: map[string]SecretRef{}}
 	inv := NewCleanInventory(root)
 	if err := writeJSONAtomic(indexPath, index); err != nil {
 		return nil, false, err
@@ -122,7 +121,7 @@ func ReadSecretIndex(privateDir string) (*SecretIndex, error) {
 	if err := readJSON(filepath.Join(privateDir, "secrets", "index.json"), &index); err != nil {
 		return nil, fmt.Errorf("read secret index: %w", err)
 	}
-	if index.Schema != InventorySchema || index.Refs == nil {
+	if index.Schema != SecretIndexSchema || index.Refs == nil {
 		return nil, errors.New("secret index schema must be 1")
 	}
 	return &index, nil
@@ -176,7 +175,7 @@ func RegisterSecret(privateDir, reference, kind, relativePath string) error {
 func ValidateInventory(inv *Inventory, privateDir string, skipSecrets bool) error {
 	var failures []string
 	if inv.Schema != InventorySchema {
-		failures = append(failures, "inventory schema must be 1")
+		failures = append(failures, "inventory schema must be 2")
 	}
 	checkIDs := func(kind string, ids []string) {
 		seen := map[string]bool{}
@@ -214,12 +213,6 @@ func ValidateInventory(inv *Inventory, privateDir string, skipSecrets bool) erro
 		providerIDs = append(providerIDs, provider.ID)
 		providerSet[provider.ID] = true
 	}
-	policyIDs := make([]string, 0, len(inv.Policies))
-	policySet := map[string]bool{}
-	for _, policy := range inv.Policies {
-		policyIDs = append(policyIDs, policy.ID)
-		policySet[policy.ID] = true
-	}
 	profileIDs := make([]string, 0, len(inv.Profiles))
 	profileSet := map[string]bool{}
 	for _, profile := range inv.Profiles {
@@ -234,7 +227,6 @@ func ValidateInventory(inv *Inventory, privateDir string, skipSecrets bool) erro
 	checkIDs("Link", linkIDs)
 	checkIDs("Route", routeIDs)
 	checkIDs("Provider", providerIDs)
-	checkIDs("Policy", policyIDs)
 	checkIDs("Profile", profileIDs)
 	checkIDs("ClientTarget", targetIDs)
 
@@ -368,9 +360,6 @@ func ValidateInventory(inv *Inventory, privateDir string, skipSecrets bool) erro
 		}
 	}
 	for _, p := range inv.Profiles {
-		if p.Policy != "" && !policySet[p.Policy] && !legacyPolicyID(p.Policy) {
-			failures = append(failures, fmt.Sprintf("Profile %q references an unknown Policy", p.ID))
-		}
 		for _, id := range p.IncludeRoutes {
 			if id != "*" && !routeSet[id] {
 				failures = append(failures, fmt.Sprintf("Profile %q references unknown Route %q", p.ID, id))
@@ -397,9 +386,16 @@ func ValidateInventory(inv *Inventory, privateDir string, skipSecrets bool) erro
 			}
 		}
 		switch t.Renderer {
-		case "mihomo", "karing":
+		case "mihomo":
+			if t.Delivery != "file" && t.Delivery != "subscription" {
+				failures = append(failures, fmt.Sprintf("Mihomo ClientTarget %q has invalid delivery", t.ID))
+			}
+			if (t.Delivery == "subscription") != (t.SubscriptionSecretRef != "") {
+				failures = append(failures, fmt.Sprintf("Mihomo ClientTarget %q has inconsistent subscription state", t.ID))
+			}
+		case "karing":
 			if t.Delivery != "file" || t.SubscriptionSecretRef != "" {
-				failures = append(failures, fmt.Sprintf("Clash-file ClientTarget %q has invalid delivery", t.ID))
+				failures = append(failures, fmt.Sprintf("Karing ClientTarget %q has invalid delivery", t.ID))
 			}
 		case "shadowrocket":
 			if t.Delivery != "nodes" && t.Delivery != "subscription" {
@@ -477,7 +473,7 @@ func ValidateProviderURL(value string) bool {
 }
 
 func emptyObserved() ObservedState {
-	return ObservedState{Schema: InventorySchema, GeneratedAt: nil, Servers: []ObservedObject{}, Links: []ObservedObject{}, Routes: []ObservedRoute{}}
+	return ObservedState{Schema: ObservedSchema, GeneratedAt: nil, Servers: []ObservedObject{}, Links: []ObservedObject{}, Routes: []ObservedRoute{}}
 }
 
 func readJSON(path string, dst any) error {

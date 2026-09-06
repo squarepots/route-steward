@@ -509,9 +509,10 @@ func applyMigrationSelection(candidate *Inventory, txn *migrationTransaction, re
 			profile.IncludeRoutes = sortedUnique(profile.IncludeRoutes)
 		}
 		if profile.Routing != nil {
-			for index, binding := range profile.Routing.ServiceRoutes {
-				if binding.Route == from {
-					profile.Routing.ServiceRoutes[index].Route = to
+			for index := range profile.Routing.Rules {
+				rule := &profile.Routing.Rules[index]
+				if rule.Action.Type == "route" && rule.Action.Route == from {
+					rule.Action.Route = to
 				}
 			}
 		}

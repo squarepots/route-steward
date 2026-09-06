@@ -25,7 +25,7 @@ func (index *SecretIndex) UnmarshalJSON(data []byte) error {
 	if decoded.Schema != SecretIndexSchema {
 		return errors.New("secret index schema must be 1")
 	}
-	index.Schema = InventorySchema
+	index.Schema = SecretIndexSchema
 	index.Refs = decoded.Refs
 	return nil
 }

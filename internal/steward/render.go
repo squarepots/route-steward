@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,6 +43,21 @@ type renderManifestEntry struct {
 }
 
 func RenderClients(state *State, targetID string, skipValidation bool) (RenderResult, error) {
+	targetIDs := []string{}
+	if targetID != "" {
+		if findClientTarget(state.Inventory, targetID) == nil {
+			return RenderResult{}, fmt.Errorf("unknown ClientTarget %q", targetID)
+		}
+		targetIDs = append(targetIDs, targetID)
+	} else {
+		for _, target := range state.Inventory.ClientTargets {
+			targetIDs = append(targetIDs, target.ID)
+		}
+	}
+	return RenderClientTargets(state, targetIDs, skipValidation)
+}
+
+func RenderClientTargets(state *State, targetIDs []string, skipValidation bool) (RenderResult, error) {
 	outputDir := state.Inventory.Delivery.Directory
 	if outputDir == "" {
 		outputDir = filepath.Join(state.PrivateDir, "delivery")
@@ -54,39 +68,73 @@ func RenderClients(state *State, targetID string, skipValidation bool) (RenderRe
 	if err := protectPath(outputDir, true); err != nil {
 		return RenderResult{}, err
 	}
-	targets := make([]ClientTarget, 0, len(state.Inventory.ClientTargets))
-	for _, target := range state.Inventory.ClientTargets {
-		if targetID == "" || target.ID == targetID {
-			targets = append(targets, target)
+	if len(targetIDs) == 0 {
+		return RenderResult{SchemaVersion: 1, Command: "render-client-targets", Success: true, Outputs: []RenderOutput{}}, nil
+	}
+	stageDir, err := os.MkdirTemp(outputDir, ".rst-render-*")
+	if err != nil {
+		return RenderResult{}, err
+	}
+	defer os.RemoveAll(stageDir)
+	type staged struct {
+		output RenderOutput
+		stage  string
+		final  string
+	}
+	stagedOutputs := make([]staged, 0, len(targetIDs))
+	seen := map[string]bool{}
+	for _, targetID := range targetIDs {
+		if seen[targetID] {
+			continue
 		}
-	}
-	if len(targets) == 0 {
-		return RenderResult{}, fmt.Errorf("unknown ClientTarget %q", targetID)
-	}
-	outputs := make([]RenderOutput, 0, len(targets))
-	for _, target := range targets {
+		seen[targetID] = true
+		target := findClientTarget(state.Inventory, targetID)
+		if target == nil {
+			return RenderResult{}, fmt.Errorf("unknown ClientTarget %q", targetID)
+		}
 		profile := findProfile(state.Inventory, target.Profile)
 		if profile == nil {
 			return RenderResult{}, fmt.Errorf("unknown Profile %q", target.Profile)
 		}
+		extension := ".yaml"
+		switch target.Renderer {
+		case "shadowrocket":
+			extension = ".html"
+		case "hysteria2":
+			extension = ".json"
+		}
+		stagePath := filepath.Join(stageDir, target.ID+extension)
+		finalPath := filepath.Join(outputDir, target.ID+extension)
 		var output RenderOutput
-		var err error
+		var renderErr error
 		switch target.Renderer {
 		case "mihomo":
-			output, err = renderClash(state, *profile, target, filepath.Join(outputDir, target.ID+".yaml"), "mihomo", skipValidation)
+			output, renderErr = renderClash(state, *profile, *target, stagePath, "mihomo", skipValidation)
 		case "karing":
-			output, err = renderClash(state, *profile, target, filepath.Join(outputDir, target.ID+".yaml"), "karing", skipValidation)
+			output, renderErr = renderClash(state, *profile, *target, stagePath, "karing", skipValidation)
 		case "shadowrocket":
-			output, err = renderShadowrocket(state, *profile, target, filepath.Join(outputDir, target.ID+".html"))
+			output, renderErr = renderShadowrocket(state, *profile, *target, stagePath)
 		case "hysteria2":
-			output, err = renderHysteria2(state, *profile, target, filepath.Join(outputDir, target.ID+".json"))
+			output, renderErr = renderHysteria2(state, *profile, *target, stagePath)
 		default:
-			err = fmt.Errorf("ClientTarget %q uses unsupported renderer %q", target.ID, target.Renderer)
+			renderErr = fmt.Errorf("ClientTarget %q uses unsupported renderer %q", target.ID, target.Renderer)
 		}
+		if renderErr != nil {
+			return RenderResult{}, renderErr
+		}
+		output.Path = finalPath
+		stagedOutputs = append(stagedOutputs, staged{output: output, stage: stagePath, final: finalPath})
+	}
+	outputs := make([]RenderOutput, 0, len(stagedOutputs))
+	for _, item := range stagedOutputs {
+		data, err := os.ReadFile(item.stage)
 		if err != nil {
 			return RenderResult{}, err
 		}
-		outputs = append(outputs, output)
+		if err := writeFileAtomic(item.final, data, 0o600); err != nil {
+			return RenderResult{}, err
+		}
+		outputs = append(outputs, item.output)
 	}
 	if err := updateRenderManifest(state, outputs); err != nil {
 		return RenderResult{}, err
@@ -215,7 +263,7 @@ func renderClash(state *State, profile Profile, target ClientTarget, outputPath,
 		processMode = "find-process-mode: strict\n"
 		processGroup.WriteString("  - name: Applications\n    type: select\n    proxies:\n      - DIRECT\n      - Private Routes\n")
 		for _, name := range processNames {
-			fmt.Fprintf(&processRules, "  - PROCESS-NAME,%s,Applications\n", name)
+			fmt.Fprintf(&processRules, "  - %s\n", yamlQuote("PROCESS-NAME,"+name+",Applications"))
 		}
 	}
 	dns := "dns:\n  enable: true\n  ipv6: true\n  enhanced-mode: fake-ip\n  fake-ip-range: 198.18.0.1/16\n  use-system-hosts: false\n  respect-rules: true\n  default-nameserver:\n    - https://1.1.1.1/dns-query\n    - https://8.8.8.8/dns-query\n  proxy-server-nameserver:\n    - https://1.1.1.1/dns-query\n    - https://8.8.8.8/dns-query\n  nameserver:\n    - 'https://1.1.1.1/dns-query#Private Routes'\n    - 'https://8.8.8.8/dns-query#Private Routes'\n"
@@ -237,11 +285,11 @@ func renderClash(state *State, profile Profile, target ClientTarget, outputPath,
 		}
 		switch rule.Match.Type {
 		case "domain_suffix":
-			fmt.Fprintf(&profileRules, "  - DOMAIN-SUFFIX,%s,%s\n", rule.Match.Value, targetName)
+			fmt.Fprintf(&profileRules, "  - %s\n", yamlQuote("DOMAIN-SUFFIX,"+rule.Match.Value+","+targetName))
 		case "geosite":
-			fmt.Fprintf(&profileRules, "  - GEOSITE,%s,%s\n", rule.Match.Value, targetName)
+			fmt.Fprintf(&profileRules, "  - %s\n", yamlQuote("GEOSITE,"+rule.Match.Value+","+targetName))
 		case "geoip":
-			fmt.Fprintf(&profileRules, "  - GEOIP,%s,%s,no-resolve\n", rule.Match.Value, targetName)
+			fmt.Fprintf(&profileRules, "  - %s\n", yamlQuote("GEOIP,"+rule.Match.Value+","+targetName+",no-resolve"))
 		}
 	}
 	text := "# route-steward: agent-native\n# Private file: contains live proxy credentials.\nmode: rule\n" + processMode + "ipv6: true\nprofile:\n  store-selected: true\n  store-fake-ip: true\n\n" + dns + "\nproxies:\n" + strings.Join(bodies, "\n") + "\n\n" + providerBlock.String() + "proxy-groups:\n  - name: Private Routes\n    type: select\n    proxies:\n" + nodeLines.String() + providerUse.String() + globalGroup.String() + routeGroups.String() + processGroup.String() + "rules:\n  - DOMAIN,localhost,DIRECT\n  - DOMAIN-SUFFIX,local,DIRECT\n  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve\n  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve\n  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve\n  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve\n  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve\n  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve\n  - IP-CIDR6,::1/128,DIRECT,no-resolve\n  - IP-CIDR6,fc00::/7,DIRECT,no-resolve\n  - IP-CIDR6,fe80::/10,DIRECT,no-resolve\n" + processRules.String() + profileRules.String() + "  - MATCH,Private Routes\n"
@@ -546,43 +594,85 @@ func findMihomo() string {
 	return ""
 }
 
-func canonicalFingerprint(state *State) (string, error) {
+func clientTargetFingerprint(state *State, targetID string) (string, error) {
+	target := findClientTarget(state.Inventory, targetID)
+	if target == nil {
+		return "", fmt.Errorf("unknown ClientTarget %q", targetID)
+	}
+	profile := findProfile(state.Inventory, target.Profile)
+	if profile == nil {
+		return "", fmt.Errorf("unknown Profile %q", target.Profile)
+	}
 	hash := sha256.New()
-	add := func(name string, data []byte) {
-		hash.Write([]byte(filepath.ToSlash(name)))
-		hash.Write([]byte{0})
-		var size [8]byte
-		binary.LittleEndian.PutUint64(size[:], uint64(len(data)))
-		hash.Write(size[:])
-		hash.Write(data)
-	}
-	inventory, err := os.ReadFile(state.InventoryPath)
-	if err != nil {
-		return "", err
-	}
-	add("inventory.json", inventory)
-	root := filepath.Join(state.PrivateDir, "secrets")
-	files := []string{}
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	add := func(name string, value any) error {
+		data, err := json.Marshal(value)
 		if err != nil {
 			return err
 		}
-		if entry.Type().IsRegular() {
-			files = append(files, path)
-		}
+		hash.Write([]byte(name))
+		hash.Write([]byte{0})
+		hash.Write(data)
+		hash.Write([]byte{0})
 		return nil
-	})
-	if err != nil {
+	}
+	addBytes := func(name string, data []byte) {
+		hash.Write([]byte(name))
+		hash.Write([]byte{0})
+		hash.Write(data)
+		hash.Write([]byte{0})
+	}
+	if err := add("target", target); err != nil {
 		return "", err
 	}
-	sort.Strings(files)
-	for _, path := range files {
+	if err := add("profile", profile); err != nil {
+		return "", err
+	}
+	allRoutes := contains(profile.IncludeRoutes, "*")
+	for _, route := range state.Inventory.Routes {
+		if !route.Enabled || (!allRoutes && !contains(profile.IncludeRoutes, route.ID)) {
+			continue
+		}
+		if err := add("route:"+route.ID, route); err != nil {
+			return "", err
+		}
+		path, err := ResolveSecret(route.PayloadSecretRef, state.PrivateDir, nil)
+		if err != nil {
+			return "", err
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", err
 		}
-		relative, _ := filepath.Rel(root, path)
-		add("secrets/"+filepath.ToSlash(relative), data)
+		addBytes("route-payload:"+route.ID, data)
+	}
+	allProviders := contains(profile.IncludeProviders, "*")
+	for _, provider := range state.Inventory.Providers {
+		if !provider.Enabled || (!allProviders && !contains(profile.IncludeProviders, provider.ID)) {
+			continue
+		}
+		if err := add("provider:"+provider.ID, provider); err != nil {
+			return "", err
+		}
+		path, err := ResolveSecret(provider.SourceSecretRef, state.PrivateDir, nil)
+		if err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		addBytes("provider-source:"+provider.ID, data)
+	}
+	if target.Renderer == "shadowrocket" && target.SubscriptionSecretRef != "" {
+		path, err := ResolveSecret(target.SubscriptionSecretRef, state.PrivateDir, nil)
+		if err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		addBytes("subscription", data)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
@@ -598,15 +688,15 @@ func updateRenderManifest(state *State, outputs []RenderOutput) error {
 			return errors.New("Client render manifest schema must be 1")
 		}
 	}
-	fingerprint, err := canonicalFingerprint(state)
-	if err != nil {
-		return err
-	}
 	entries := map[string]renderManifestEntry{}
 	for _, entry := range manifest.Targets {
 		entries[entry.ID] = entry
 	}
 	for _, output := range outputs {
+		fingerprint, err := clientTargetFingerprint(state, output.ClientTarget)
+		if err != nil {
+			return err
+		}
 		sum, err := sha256File(output.Path)
 		if err != nil {
 			return err

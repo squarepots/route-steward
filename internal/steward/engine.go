@@ -8,6 +8,16 @@ import (
 
 const safeFailureSummary = "The operation failed locally. No secret-bearing diagnostic was returned through the agent surface."
 
+type operationStageError struct {
+	Stage        string
+	StateChanged string
+	Retry        string
+	Err          error
+}
+
+func (e *operationStageError) Error() string { return e.Err.Error() }
+func (e *operationStageError) Unwrap() error { return e.Err }
+
 type Request struct {
 	Command    string
 	Operation  string
@@ -119,7 +129,14 @@ func executeReady(ctx context.Context, state *State, request Request) (any, stri
 		if errors.Is(err, errSubscriptionPayloadTooLarge) {
 			code = "subscription-payload-too-large"
 		}
-		return map[string]string{"summary": safeFailureSummary}, code, 1
+		data := map[string]any{"summary": safeFailureSummary, "operation": request.Operation}
+		var staged *operationStageError
+		if errors.As(err, &staged) {
+			data["stage"] = staged.Stage
+			data["state_changed"] = staged.StateChanged
+			data["retry"] = staged.Retry
+		}
+		return data, code, 1
 	}
 	var result any
 	var err error

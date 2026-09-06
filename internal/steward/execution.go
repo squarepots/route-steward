@@ -89,9 +89,10 @@ func deployRoute(ctx context.Context, state *State, routeID string, skipClientVa
 	}
 	result := map[string]any{"route": route.ID, "state": "deployed", "enabled": true, "validation": evidence.Sanitized()}
 	if renderClients {
-		render, err := RenderClients(state, "", skipClientValidation)
+		targets := affectedMigrationTargets(state.Inventory, route.ID)
+		render, err := RenderClientTargets(state, targets, skipClientValidation)
 		if err != nil {
-			return nil, fmt.Errorf("Route deployed, but client rendering failed: %w", err)
+			return nil, &operationStageError{Stage: "client-delivery", StateChanged: "route-deployed", Retry: "render-client", Err: err}
 		}
 		result["render"] = SanitizedRender(render)
 	}

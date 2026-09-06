@@ -27,6 +27,8 @@ var (
 	hostNamePattern                = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$`)
 	tokenPattern                   = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 	errSubscriptionPayloadTooLarge = errors.New("subscription-payload-too-large")
+	subscriptionSecretChunkBytes   = 4000
+	subscriptionMaxChunks          = 60
 )
 
 type subscriptionState struct {
@@ -45,10 +47,40 @@ type subscriptionState struct {
 
 func AssertSubscriptionBodySize(body string) (int, error) {
 	size := len([]byte(body))
-	if size > 5120 {
+	if size > subscriptionSecretChunkBytes*subscriptionMaxChunks {
 		return size, errSubscriptionPayloadTooLarge
 	}
 	return size, nil
+}
+
+func subscriptionCapableTarget(target *ClientTarget) bool {
+	return target != nil && (target.Renderer == "shadowrocket" || target.Renderer == "mihomo")
+}
+
+func subscriptionBodyChunks(body string) ([]string, error) {
+	if _, err := AssertSubscriptionBodySize(body); err != nil {
+		return nil, err
+	}
+	data := []byte(body)
+	chunks := make([]string, 0, (len(data)+subscriptionSecretChunkBytes-1)/subscriptionSecretChunkBytes)
+	for len(data) > 0 {
+		limit := subscriptionSecretChunkBytes
+		if len(data) < limit {
+			limit = len(data)
+		}
+		for limit > 0 && limit < len(data) && (data[limit]&0xc0) == 0x80 {
+			limit--
+		}
+		if limit == 0 {
+			return nil, errors.New("subscription body could not be split as UTF-8")
+		}
+		chunks = append(chunks, string(data[:limit]))
+		data = data[limit:]
+	}
+	if len(chunks) == 0 {
+		return nil, errors.New("subscription body is empty")
+	}
+	return chunks, nil
 }
 
 func newSubscriptionToken() (string, error) {
@@ -72,8 +104,8 @@ func validateWorkerIdentity(workerName, hostName string) (string, error) {
 
 func readSubscriptionState(state *State, targetID string) (*subscriptionState, error) {
 	target := findClientTarget(state.Inventory, targetID)
-	if target == nil || target.Renderer != "shadowrocket" {
-		return nil, fmt.Errorf("ClientTarget %q is not a Shadowrocket target", targetID)
+	if !subscriptionCapableTarget(target) {
+		return nil, fmt.Errorf("ClientTarget %q does not support private subscription delivery", targetID)
 	}
 	if target.SubscriptionSecretRef == "" {
 		return nil, fmt.Errorf("ClientTarget %q has no private subscription state", targetID)
@@ -105,8 +137,8 @@ func readSubscriptionState(state *State, targetID string) (*subscriptionState, e
 
 func initializeSubscriptionState(state *State, targetID, workerName, hostName string) (*subscriptionState, error) {
 	target := findClientTarget(state.Inventory, targetID)
-	if target == nil || target.Renderer != "shadowrocket" {
-		return nil, fmt.Errorf("ClientTarget %q is not a Shadowrocket target", targetID)
+	if !subscriptionCapableTarget(target) {
+		return nil, fmt.Errorf("ClientTarget %q does not support private subscription delivery", targetID)
 	}
 	host, err := validateWorkerIdentity(workerName, hostName)
 	if err != nil {
@@ -161,12 +193,30 @@ func initializeSubscriptionState(state *State, targetID, workerName, hostName st
 
 func ExportSubscriptionBody(state *State, targetID string) (string, int, error) {
 	target := findClientTarget(state.Inventory, targetID)
-	if target == nil || target.Renderer != "shadowrocket" {
-		return "", 0, fmt.Errorf("ClientTarget %q is not a Shadowrocket target", targetID)
+	if !subscriptionCapableTarget(target) {
+		return "", 0, fmt.Errorf("ClientTarget %q does not support private subscription delivery", targetID)
 	}
 	profile := findProfile(state.Inventory, target.Profile)
 	if profile == nil {
 		return "", 0, fmt.Errorf("unknown Profile %q", target.Profile)
+	}
+	if target.Renderer == "mihomo" {
+		rendered, err := RenderClients(state, targetID, false)
+		if err != nil {
+			return "", 0, err
+		}
+		if len(rendered.Outputs) != 1 {
+			return "", 0, errors.New("Mihomo subscription render did not produce one artifact")
+		}
+		data, err := os.ReadFile(rendered.Outputs[0].Path)
+		if err != nil {
+			return "", 0, err
+		}
+		body := string(data)
+		if _, err := AssertSubscriptionBodySize(body); err != nil {
+			return "", 0, err
+		}
+		return body, rendered.Outputs[0].NodeCount, nil
 	}
 	nodes, _, err := profileNodes(state, *profile)
 	if err != nil {
@@ -190,6 +240,15 @@ func ExportSubscriptionBody(state *State, targetID string) (string, int, error) 
 	return body, len(uris), nil
 }
 
+func writeSubscriptionReference(state *State, targetID string, subscription *subscriptionState) (*Artifact, error) {
+	path := filepath.Join(state.Inventory.Delivery.Directory, targetID+".subscription.txt")
+	value := "https://" + subscription.Host + "/s/" + subscription.Token + "\n"
+	if err := writeFileAtomic(path, []byte(value), 0o600); err != nil {
+		return nil, err
+	}
+	return &Artifact{ID: targetID + "-subscription", FileName: filepath.Base(path), RelativePath: "<private>/delivery/" + filepath.Base(path)}, nil
+}
+
 func PublishSubscription(state *State, targetID string, context map[string]any) (map[string]any, error) {
 	subscription, err := readSubscriptionState(state, targetID)
 	if err != nil {
@@ -208,18 +267,28 @@ func PublishSubscription(state *State, targetID string, context map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	if err := deployWorkerAndVerify(subscription.WorkerName, subscription.Host, subscription.Token, body); err != nil {
+	target := findClientTarget(state.Inventory, targetID)
+	if err := deployWorkerAndVerify(subscription.WorkerName, subscription.Host, subscription.Token, target.Renderer, body); err != nil {
 		return nil, err
 	}
 	now := utcNow()
 	subscription.LastPublishedAt = &now
 	if err := writeJSONAtomic(subscription.Path, subscription); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "subscription-state", StateChanged: "subscription-published", Retry: "publish-subscription", Err: err}
 	}
-	if _, err := RenderClients(state, targetID, true); err != nil {
-		return nil, fmt.Errorf("subscription published but local import artifact failed: %w", err)
+	result := map[string]any{"client_target": targetID, "worker": subscription.WorkerName, "published": true, "verified": true}
+	if target.Renderer == "shadowrocket" {
+		if _, err := RenderClients(state, targetID, true); err != nil {
+			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-published", Retry: "render-client", Err: err}
+		}
+	} else {
+		artifact, err := writeSubscriptionReference(state, targetID, subscription)
+		if err != nil {
+			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-published", Retry: "publish-subscription", Err: err}
+		}
+		result["import_artifact"] = artifact
 	}
-	return map[string]any{"client_target": targetID, "worker": subscription.WorkerName, "published": true, "verified": true}, nil
+	return result, nil
 }
 
 func RotateSubscriptionToken(state *State, targetID string) (map[string]any, error) {
@@ -246,7 +315,8 @@ func RotateSubscriptionToken(state *State, targetID string) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
-	if err := deployWorkerAndVerify(subscription.WorkerName, subscription.Host, proposed, body); err != nil {
+	target := findClientTarget(state.Inventory, targetID)
+	if err := deployWorkerAndVerify(subscription.WorkerName, subscription.Host, proposed, target.Renderer, body); err != nil {
 		return nil, err
 	}
 	var fresh subscriptionState
@@ -262,15 +332,19 @@ func RotateSubscriptionToken(state *State, targetID string) (map[string]any, err
 	fresh.RotatedAt = &now
 	fresh.LastPublishedAt = &now
 	if err := writeJSONAtomic(subscription.Path, &fresh); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "subscription-token-state", StateChanged: "new-token-active-at-worker", Retry: "rotate-subscription-token", Err: err}
 	}
-	if _, err := RenderClients(state, targetID, true); err != nil {
-		return nil, err
+	if target.Renderer == "shadowrocket" {
+		if _, err := RenderClients(state, targetID, true); err != nil {
+			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-token-rotated", Retry: "render-client", Err: err}
+		}
+	} else if _, err := writeSubscriptionReference(state, targetID, &fresh); err != nil {
+		return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-token-rotated", Retry: "rotate-subscription-token", Err: err}
 	}
 	return map[string]any{"client_target": targetID, "token_rotated": true, "published": true, "verified": true, "old_token_revoked_at_worker": true, "unrelated_route_credentials_changed": false, "unrelated_client_credentials_changed": false}, nil
 }
 
-func deployWorkerAndVerify(workerName, host, token, body string) error {
+func deployWorkerAndVerify(workerName, host, token, format, body string) error {
 	if _, err := AssertSubscriptionBodySize(body); err != nil {
 		return err
 	}
@@ -296,8 +370,20 @@ func deployWorkerAndVerify(workerName, host, token, body string) error {
 		}
 	}
 	sum := sha256.Sum256([]byte(token))
+	chunks, err := subscriptionBodyChunks(body)
+	if err != nil {
+		return err
+	}
+	secrets := map[string]string{
+		"SUBSCRIPTION_TOKEN_HASH":  hex.EncodeToString(sum[:]),
+		"SUBSCRIPTION_FORMAT":      format,
+		"SUBSCRIPTION_CHUNK_COUNT": fmt.Sprint(len(chunks)),
+	}
+	for index, chunk := range chunks {
+		secrets[fmt.Sprintf("SUBSCRIPTION_BODY_%02d", index)] = chunk
+	}
 	secretPath := filepath.Join(stage, "worker-secrets.json")
-	secretData, _ := json.Marshal(map[string]string{"SUBSCRIPTION_TOKEN_HASH": hex.EncodeToString(sum[:]), "SUBSCRIPTION_BODY": body})
+	secretData, _ := json.Marshal(secrets)
 	if err := writeFileAtomic(secretPath, secretData, 0o600); err != nil {
 		return err
 	}
@@ -332,10 +418,10 @@ func deployWorkerAndVerify(workerName, host, token, body string) error {
 	if err := run(npx, append(base, "--secrets-file", secretPath, "--keep-vars", "--minify", "--strict")...); err != nil {
 		return fmt.Errorf("Cloudflare rejected Worker deployment: %w", err)
 	}
-	return verifySubscriptionEndpoint("https://"+host+"/s/"+token, body)
+	return verifySubscriptionEndpoint("https://"+host+"/s/"+token, format, body)
 }
 
-func verifySubscriptionEndpoint(endpoint, expected string) error {
+func verifySubscriptionEndpoint(endpoint, format, expected string) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -356,6 +442,9 @@ func verifySubscriptionEndpoint(endpoint, expected string) error {
 	}
 	if !strings.Contains(strings.ToLower(response.Header.Get("Cache-Control")), "no-store") {
 		return errors.New("private subscription endpoint is missing its no-store cache policy")
+	}
+	if format == "mihomo" && !strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "yaml") {
+		return errors.New("Mihomo subscription endpoint is missing its YAML content type")
 	}
 	return nil
 }

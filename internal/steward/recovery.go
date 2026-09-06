@@ -70,12 +70,6 @@ func CreateRecoveryArchive(state *State, sevenZipPath string) (string, error) {
 	if err := writeJSONAtomic(filepath.Join(stage, "private", "inventory.json"), state.Inventory); err != nil {
 		return "", err
 	}
-	observed := filepath.Join(state.PrivateDir, "observed.json")
-	if regularFile(observed) {
-		if err := copyOne(observed, "private/observed.json"); err != nil {
-			return "", err
-		}
-	}
 	if err := copyTree(filepath.Join(state.PrivateDir, "secrets"), filepath.Join(stage, "private", "secrets")); err != nil {
 		return "", err
 	}

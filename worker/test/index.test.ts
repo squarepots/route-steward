@@ -5,11 +5,14 @@ const token = "A".repeat(43);
 const subscriptionBody = "aHlzdGVyaWEyOi8vZXhhbXBsZS5pbnZhbGlkCg==";
 const env: SubscriptionEnv = {
   SUBSCRIPTION_TOKEN_HASH: "0f007385b6f9d4b7eeb2748605afe1a984a0a3bfa3f014d09e2a784ce9e5cd1a",
-  SUBSCRIPTION_BODY: subscriptionBody,
+  SUBSCRIPTION_FORMAT: "shadowrocket",
+  SUBSCRIPTION_CHUNK_COUNT: "2",
+  SUBSCRIPTION_BODY_00: subscriptionBody.slice(0, 20),
+  SUBSCRIPTION_BODY_01: subscriptionBody.slice(20),
 };
 
-function request(path: string, method = "GET"): Promise<Response> {
-  return worker.fetch(new Request(`https://subscription.example.invalid${path}`, { method }), env);
+function request(path: string, method = "GET", bindings: SubscriptionEnv = env): Promise<Response> {
+  return worker.fetch(new Request(`https://subscription.example.invalid${path}`, { method }), bindings);
 }
 
 describe("private subscription Worker", () => {
@@ -19,6 +22,22 @@ describe("private subscription Worker", () => {
     expect(await response.text()).toBe(subscriptionBody);
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("serves Mihomo YAML with subscription headers", async () => {
+    const yaml = "proxies:\n  - name: example\n";
+    const response = await request(`/s/${token}`, "GET", {
+      ...env,
+      SUBSCRIPTION_FORMAT: "mihomo",
+      SUBSCRIPTION_CHUNK_COUNT: "1",
+      SUBSCRIPTION_BODY_00: yaml,
+      SUBSCRIPTION_BODY_01: undefined,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(yaml);
+    expect(response.headers.get("content-type")).toContain("yaml");
+    expect(response.headers.get("content-disposition")).toContain("route-steward.yaml");
+    expect(response.headers.get("profile-update-interval")).toBe("24");
   });
 
   it("supports HEAD without returning the subscription", async () => {
@@ -33,14 +52,11 @@ describe("private subscription Worker", () => {
     expect((await request(`/s/${"B".repeat(43)}`)).status).toBe(404);
   });
 
-  it("rejects writes and fails closed when secrets are missing", async () => {
+  it("rejects writes and fails closed when secrets are missing or chunks are incomplete", async () => {
     const write = await request(`/s/${token}`, "POST");
     expect(write.status).toBe(405);
     expect(write.headers.get("allow")).toBe("GET, HEAD");
-    const unavailable = await worker.fetch(
-      new Request(`https://subscription.example.invalid/s/${token}`),
-      {},
-    );
-    expect(unavailable.status).toBe(503);
+    expect((await request(`/s/${token}`, "GET", {})).status).toBe(503);
+    expect((await request(`/s/${token}`, "GET", { ...env, SUBSCRIPTION_BODY_01: undefined })).status).toBe(503);
   });
 });

@@ -213,7 +213,7 @@ func NewPreflight(operation, target string, state *State, context map[string]any
 		if routing, hasRouting, err := profileRoutingFromContext(context); err != nil {
 			conflicts = append(conflicts, "profile-routing-invalid")
 		} else if stringField(context, "profile_id") != "" {
-			candidate := Profile{ID: stringField(context, "profile_id"), Policy: stringField(context, "policy"), IncludeRoutes: stringSliceField(context, "include_routes", []string{"*"}), IncludeProviders: stringSliceField(context, "include_providers", []string{})}
+			candidate := Profile{ID: stringField(context, "profile_id"), IncludeRoutes: stringSliceField(context, "include_routes", []string{"*"}), IncludeProviders: stringSliceField(context, "include_providers", []string{})}
 			if hasRouting {
 				candidate.Routing = routing
 			} else if !hasField(context, "policy") {
@@ -238,16 +238,13 @@ func NewPreflight(operation, target string, state *State, context map[string]any
 			candidate.IncludeRoutes = append([]string(nil), selected.IncludeRoutes...)
 			candidate.IncludeProviders = append([]string(nil), selected.IncludeProviders...)
 			candidate.Routing = cloneProfileRouting(selected.Routing)
-			if hasField(context, "policy") {
-				candidate.Policy = stringField(context, "policy")
-			}
 			if hasField(context, "include_routes") {
 				candidate.IncludeRoutes = stringSliceField(context, "include_routes", nil)
 			}
 			if hasField(context, "include_providers") {
 				candidate.IncludeProviders = stringSliceField(context, "include_providers", nil)
 			}
-			if hasField(context, "routing") {
+			if hasField(context, "routing") || hasField(context, "policy") {
 				if routing, _, err := profileRoutingFromContext(context); err != nil {
 					conflicts = append(conflicts, "profile-routing-invalid")
 				} else {
@@ -415,8 +412,8 @@ func NewPreflight(operation, target string, state *State, context map[string]any
 	case "publish-subscription":
 		if target == "" {
 			missing = append(missing, "target-client-target")
-		} else if t := clientTarget(target); t == nil || t.Renderer != "shadowrocket" {
-			conflicts = append(conflicts, "target-client-target-not-shadowrocket")
+		} else if t := clientTarget(target); t == nil || (t.Renderer != "shadowrocket" && t.Renderer != "mihomo") {
+			conflicts = append(conflicts, "target-client-target-not-subscription-capable")
 		} else if t.SubscriptionSecretRef == "" {
 			if stringField(context, "worker_name") == "" {
 				missing = append(missing, "worker-name")
@@ -436,8 +433,8 @@ func NewPreflight(operation, target string, state *State, context map[string]any
 			missing = append(missing, "target-client-target")
 		} else if t := clientTarget(target); t == nil {
 			conflicts = append(conflicts, "target-client-target-missing")
-		} else if t.Renderer != "shadowrocket" {
-			conflicts = append(conflicts, "target-client-target-not-shadowrocket")
+		} else if t.Renderer != "shadowrocket" && t.Renderer != "mihomo" {
+			conflicts = append(conflicts, "target-client-target-not-subscription-capable")
 		} else if t.SubscriptionSecretRef == "" {
 			conflicts = append(conflicts, "client-target-has-no-subscription-state")
 		}

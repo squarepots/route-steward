@@ -36,7 +36,7 @@ func Capabilities() []Capability {
 		capability("remove-client-target", "agent", true, "local-write", "Remove a ClientTarget after any target-scoped subscription state is revoked.", []ContextField{target("client-target-id", true)}, "remove-local-client-target"),
 		capability("deploy-route", "core", true, "remote-write", "Deploy one existing desired Route.", []ContextField{target("route-id", true)}, "mutate-supported-dedicated-hosts", "render-private-client-artifacts"),
 		capability("render-client", "core", true, "local-write", "Render supported client files from inventory and secrets.", []ContextField{target("client-target-id", false)}, "write-private-client-artifacts"),
-		capability("publish-subscription", "core", true, "external-publication", "Publish one private ClientTarget subscription payload.", []ContextField{target("client-target-id", true), {Name: "worker_name", Type: "worker-name", Required: false, When: "subscription state is absent"}, {Name: "host", Type: "hostname", Required: false, When: "subscription state is absent"}}, "publish-private-subscription-payload"),
+		capability("publish-subscription", "core", true, "external-publication", "Publish one private Mihomo or Shadowrocket ClientTarget subscription payload.", []ContextField{target("client-target-id", true), {Name: "worker_name", Type: "worker-name", Required: false, When: "subscription state is absent"}, {Name: "host", Type: "hostname", Required: false, When: "subscription state is absent"}}, "publish-private-subscription-payload"),
 		capability("rotate-subscription-token", "agent", true, "credential-change", "Rotate only one ClientTarget subscription bearer token after explicit current authorization.", []ContextField{target("client-target-id", true)}, "rotate-target-subscription-token"),
 		capability("migrate-route", "workflow", true, "remote-write", "Create, test, and switch to replacement capacity through a resumable transaction. Keep old capacity available.", []ContextField{target("route-id", true), field("replacement_server_id", "server-id", true), {Name: "replacement_server", Type: "server-context", Required: false, When: "replacement Server is absent from inventory"}, {Name: "replace_server_id", Type: "server-id", Required: false, When: "the source Route is a relay"}}, "persist-resumable-migration-transaction", "create-and-validate-overlap", "switch-client-output-after-healthy-traffic-proof", "keep-old-remote-capacity-unretired"),
 		secretPromptCapability("backup", "Create an encrypted recovery archive using a local 7-Zip password prompt.", nil, "write-encrypted-local-recovery-archive"),
@@ -75,31 +75,47 @@ func DriverCapabilities() map[string]any {
 		"profile_routing": map[string]any{"state": "supported", "ordered": true, "match_types": []string{"domain_suffix", "geosite", "geoip"}, "action_types": []string{"direct", "route"}, "route_target": "enabled-included-route-id", "fallback": "Private Routes", "renderers": []string{"mihomo", "karing"}},
 		"health_checks":   []any{map[string]any{"id": "hysteria2-client-traffic", "state": "supported", "routes": []string{"direct", "relay"}, "on_demand": true, "external_endpoints": []string{"cloudflare-trace", "ipify"}, "packet_loss": "unsupported"}},
 		"renderers": []any{
-			map[string]any{"id": "mihomo", "state": "supported", "compatibility_baseline": mihomoCompatibilityBaseline, "clients": []string{"Clash Verge-compatible Mihomo clients"}, "global_selector": "GLOBAL", "provider_group_semantics": []string{"proxies", "use"}, "process_routing": map[string]any{"field": "mihomo_process_names", "rule": "PROCESS-NAME", "mode": "find-process-mode strict", "policy_group": "Applications", "process_name_limit": maxMihomoProcessNames, "rule_position": "after-private-direct-before-profile-routing"}},
+			map[string]any{"id": "mihomo", "state": "supported", "compatibility_baseline": mihomoCompatibilityBaseline, "clients": []string{"Clash Verge-compatible Mihomo clients"}, "delivery": []string{"private-file", "private-subscription"}, "global_selector": "GLOBAL", "provider_group_semantics": []string{"proxies", "use"}, "process_routing": map[string]any{"field": "mihomo_process_names", "rule": "PROCESS-NAME", "mode": "find-process-mode strict", "policy_group": "Applications", "process_name_limit": maxMihomoProcessNames, "rule_position": "after-private-direct-before-profile-routing"}},
 			map[string]any{"id": "karing", "state": "supported", "compatibility_baseline": karingCompatibilityBaseline, "delivery": []string{"private-clash-yaml"}, "platforms": []string{"windows", "macos", "linux", "ios", "android", "tvos"}, "tls_identity": "sha256-certificate-pinning"},
 			map[string]any{"id": "shadowrocket", "state": "supported", "delivery": []string{"node-import", "private-subscription"}},
 			map[string]any{"id": "hysteria2", "state": "supported", "delivery": []string{"private-json"}, "local_modes": []string{"http", "socks5"}, "runtime": "verified-official-client"},
 		},
 		"client_proxy":          []any{map[string]any{"id": "hysteria2-loopback", "state": "supported", "command": "proxy", "check": "real-http-exit-identity", "listen_scope": "loopback-only"}},
-		"subscription_delivery": []any{map[string]any{"id": "cloudflare-worker", "state": "supported", "optional": true, "role": "private-config-delivery-only"}},
+		"subscription_delivery": []any{map[string]any{"id": "cloudflare-worker", "state": "supported", "optional": true, "role": "private-client-config-delivery-only"}},
 	}
 }
 
 func SanitizedContext(inv *Inventory) map[string]any {
 	enabledRoutes, enabledProviders := 0, 0
-	for _, r := range inv.Routes {
-		if r.Enabled {
+	servers := make([]map[string]any, 0, len(inv.Servers))
+	for _, server := range inv.Servers {
+		servers = append(servers, map[string]any{"id": server.ID, "roles": append([]string(nil), server.Roles...)})
+	}
+	links := make([]map[string]any, 0, len(inv.Links))
+	for _, link := range inv.Links {
+		links = append(links, map[string]any{"id": link.ID, "entry_server": link.EntryServer, "exit_server": link.ExitServer, "enabled": link.Enabled})
+	}
+	routes := make([]map[string]any, 0, len(inv.Routes))
+	for _, route := range inv.Routes {
+		if route.Enabled {
 			enabledRoutes++
 		}
+		item := map[string]any{"id": route.ID, "kind": route.Kind, "entry_server": route.EntryServer, "exit_server": route.ExitServer, "enabled": route.Enabled, "state": route.State}
+		if route.Link != nil {
+			item["link"] = *route.Link
+		}
+		routes = append(routes, item)
 	}
-	for _, p := range inv.Providers {
-		if p.Enabled {
+	providers := make([]map[string]any, 0, len(inv.Providers))
+	for _, provider := range inv.Providers {
+		if provider.Enabled {
 			enabledProviders++
 		}
+		providers = append(providers, map[string]any{"id": provider.ID, "enabled": provider.Enabled})
 	}
 	profiles := make([]map[string]any, 0, len(inv.Profiles))
-	for _, p := range inv.Profiles {
-		routing := effectiveProfileRouting(p)
+	for _, profile := range inv.Profiles {
+		routing := effectiveProfileRouting(profile)
 		rules := make([]map[string]any, 0, len(routing.Rules))
 		for _, rule := range routing.Rules {
 			match := map[string]string{"type": rule.Match.Type, "value": rule.Match.Value}
@@ -109,23 +125,32 @@ func SanitizedContext(inv *Inventory) map[string]any {
 			}
 			rules = append(rules, map[string]any{"match": match, "action": action})
 		}
-		profiles = append(profiles, map[string]any{"id": p.ID, "routing": map[string]any{"rules": rules}})
+		profiles = append(profiles, map[string]any{"id": profile.ID, "include_routes": append([]string(nil), profile.IncludeRoutes...), "include_providers": append([]string(nil), profile.IncludeProviders...), "routing": map[string]any{"rules": rules}})
 	}
 	targets := make([]map[string]any, 0, len(inv.ClientTargets))
 	processNameCount := 0
-	for _, t := range inv.ClientTargets {
-		processNameCount += len(t.MihomoProcessNames)
-		target := map[string]any{"id": t.ID, "profile": t.Profile, "renderer": t.Renderer, "delivery": t.Delivery}
-		if t.Renderer == "mihomo" {
-			target["mihomo_process_name_count"] = len(t.MihomoProcessNames)
+	for _, target := range inv.ClientTargets {
+		processNameCount += len(target.MihomoProcessNames)
+		item := map[string]any{"id": target.ID, "profile": target.Profile, "renderer": target.Renderer, "delivery": target.Delivery, "subscription_initialized": target.SubscriptionSecretRef != ""}
+		if target.Renderer == "mihomo" {
+			item["mihomo_process_name_count"] = len(target.MihomoProcessNames)
 		}
-		targets = append(targets, target)
+		if target.Renderer == "hysteria2" {
+			item["route"] = target.Route
+		}
+		targets = append(targets, item)
 	}
 	operations := make([]map[string]string, 0, len(Capabilities()))
-	for _, c := range Capabilities() {
-		operations = append(operations, map[string]string{"id": c.ID, "state": c.State, "authorization_class": c.AuthorizationClass})
+	for _, capability := range Capabilities() {
+		operations = append(operations, map[string]string{"id": capability.ID, "state": capability.State, "authorization_class": capability.AuthorizationClass})
 	}
-	return map[string]any{"schema_version": 1, "inventory_schema": inv.Schema, "counts": map[string]int{"servers": len(inv.Servers), "links": len(inv.Links), "routes": len(inv.Routes), "enabled_routes": enabledRoutes, "providers": len(inv.Providers), "enabled_providers": enabledProviders, "profiles": len(inv.Profiles), "client_targets": len(inv.ClientTargets), "mihomo_process_names": processNameCount}, "profiles": profiles, "client_targets": targets, "supported_operations": operations}
+	return map[string]any{
+		"schema_version":   1,
+		"inventory_schema": inv.Schema,
+		"counts":           map[string]int{"servers": len(inv.Servers), "links": len(inv.Links), "routes": len(inv.Routes), "enabled_routes": enabledRoutes, "providers": len(inv.Providers), "enabled_providers": enabledProviders, "profiles": len(inv.Profiles), "client_targets": len(inv.ClientTargets), "mihomo_process_names": processNameCount},
+		"servers":          servers, "links": links, "routes": routes, "providers": providers, "profiles": profiles, "client_targets": targets,
+		"supported_operations": operations,
+	}
 }
 
 func sortedUnique(values []string) []string {
