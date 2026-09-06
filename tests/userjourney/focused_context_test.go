@@ -41,7 +41,7 @@ func TestMCPFocusedCapabilityAndContext(t *testing.T) {
 		t.Fatalf("focused MCP capability lookup failed: result=%#v err=%v", focusedCapability, err)
 	}
 	capEnvelope := decodeMCPEnvelope(t, focusedCapability)
-	if !capEnvelope.Success || !jsonContains(capEnvelope.Data, `"capability":{"id":"add-server"}`) {
+	if !capEnvelope.Success || !jsonContains(capEnvelope.Data, `"id":"add-server"`) || !jsonContains(capEnvelope.Data, `"authorization_class":"local-write"`) {
 		t.Fatalf("focused MCP capability lookup returned unexpected data: %s", capEnvelope.Data)
 	}
 	if jsonContains(capEnvelope.Data, `"capabilities"`) || jsonContains(capEnvelope.Data, `"drivers"`) {
