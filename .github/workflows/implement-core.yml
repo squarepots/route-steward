@@ -16,7 +16,9 @@ jobs:
           go-version: 1.27.0
           cache: true
       - name: Apply reviewed changes
-        run: python3 .github/implement-core.py
+        run: |
+          python3 .github/implement-core.py
+          python3 .github/fix-core.py
       - name: Format and validate native code
         shell: bash
         run: |
@@ -37,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/implement-core.py .github/workflows/implement-core.yml .github/workflows/review-workspace.yml
+          rm -f .github/implement-core.py .github/fix-core.py .github/workflows/implement-core.yml .github/workflows/review-workspace.yml
           git add -A
           git config user.name squarepots
           git config user.email 46488165+squarepots@users.noreply.github.com
