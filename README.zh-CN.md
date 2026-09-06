@@ -11,7 +11,7 @@
 ## 把仓库交给 AI
 
 ```text
-打开 https://github.com/squarepots/route-steward，并使用仓库里的 Route Steward skill 帮我在自己控制的服务器上搭建或管理私有代理。
+Open https://github.com/squarepots/route-steward and use its Route Steward skill to set up or manage a private proxy on servers I control.
 ```
 
 安装和第一次使用见[快速开始](docs/QUICKSTART.md)。
