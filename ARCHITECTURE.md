@@ -26,10 +26,9 @@ All supported agent runtimes call the same executable and Go engine.
 - **Link** — connection between two Servers. Driver: single-hop `wireguard`.
 - **Route** — logical network path offered to ClientTargets. A `direct` Route uses one Server; a `relay` Route references ingress Server, egress Server, and Link. Initial ingress driver: `hysteria2`.
 - **Provider** — optional upstream third-party node source. Initial source type: generic `mihomo-http`.
-- **Policy** — legacy schema-1 routing input retained for compatibility.
 - **Profile** — reusable Route and Provider selection with ordered generic routing.
 - **ClientTarget** — renderer and delivery settings for one Profile. Renderers: `mihomo`, `karing`, `shadowrocket`, and `hysteria2`.
-- **Private subscription** — delivery state for one Shadowrocket ClientTarget.
+- **Private subscription** — delivery state for one Mihomo or Shadowrocket ClientTarget.
 
 ## State layers
 
@@ -120,14 +119,14 @@ The optional Worker publishes one private Mihomo or Shadowrocket subscription:
 ```text
 ClientTarget + Profile + Route state
   → renderer-specific Mihomo YAML or Shadowrocket node export
-  → subscription body + token hash as Worker secrets
+  → bounded subscription body chunks + token hash as Worker secrets
   → isolated token-protected HTTPS endpoint
-  → Shadowrocket refresh
+  → Clash Verge-compatible or Shadowrocket subscription refresh
 ```
 
 Subscription state belongs to one ClientTarget. Different subscription-backed ClientTargets cannot share the same Worker identity or host in the current single-body design.
 
-Token rotation is recoverable and changes one ClientTarget. The Worker stores the subscription body and token hash as secrets and serves the configuration from a non-cacheable HTTPS endpoint.
+Token rotation is recoverable and changes one ClientTarget. The Worker stores bounded subscription-body chunks and the token hash as secrets and serves the configuration from a non-cacheable HTTPS endpoint.
 
 ## Desired / observed / drift
 

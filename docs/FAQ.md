@@ -14,7 +14,7 @@ Download the archive for your operating system and architecture from [GitHub Rel
 
 ## Why must the server be dedicated?
 
-Initial setup prepares the whole host. It changes UFW defaults, swap/fstab, SSH, sysctl, journald, packages, unattended-upgrades, SMTP egress, and vnstat state. A fresh dedicated host makes those effects explicit and keeps unrelated production workloads outside the change boundary.
+Current initial setup installs the RST-required package set, an SSH key-only drop-in, and the UFW baseline. RST still supports dedicated, rebuildable hosts so proxy deployment and host ownership stay unambiguous while broader shared-host support remains unproven. Older releases may have left additional host-wide settings in place.
 
 ## Can I start by giving the GitHub link to an AI agent?
 
@@ -66,7 +66,7 @@ See [Compatibility](COMPATIBILITY.md) or run `route-steward capabilities`.
 
 ## What does the optional subscription Worker do?
 
-It delivers one private Shadowrocket ClientTarget configuration from an isolated Cloudflare Worker endpoint. The bearer token is target-scoped and the UTF-8 configuration body is limited to 5120 bytes. Cloudflare remains inside that delivery path's privacy boundary.
+It delivers one private Mihomo or Shadowrocket ClientTarget from an isolated Cloudflare Worker endpoint. The bearer token is target-scoped. Route Steward splits the private body into bounded Worker-secret chunks and currently limits the complete UTF-8 payload to 240000 bytes. Cloudflare remains inside that delivery path's privacy boundary.
 
 ## What operating conditions apply?
 

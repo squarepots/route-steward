@@ -21,7 +21,7 @@ Keep real inventory, observations, credentials, Provider and subscription URLs, 
 
 Use Route Steward operations for configuration changes. Raw SSH is limited to read-only diagnosis when the product lacks a suitable diagnostic. Investigate drifted or undetermined remote state before another deployment.
 
-Host preparation changes UFW, swap/fstab, SMTP egress, SSH, sysctl, journald, packages, unattended upgrades, and vnstat. Deployment supports dedicated, rebuildable Ubuntu 24.04 amd64 hosts. RST deployment and uninstall operate on RST-owned resources and named policy files; earlier global host settings remain in place.
+Host preparation installs the RST-required package set, SSH key-only drop-in, and UFW baseline. Deployment supports dedicated, rebuildable Ubuntu 24.04 amd64 hosts. RST deployment and uninstall operate on RST-owned resources and named policy files; settings left by older Route Steward releases remain in place unless the operator changes them separately.
 
 Subscription-token rotation affects one ClientTarget and requires explicit current approval.
 

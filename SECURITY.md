@@ -73,7 +73,7 @@ Implemented authorization classes are:
 
 ## Remote ownership
 
-The supported host is a dedicated, rebuildable Ubuntu 24.04 amd64 server. Initial preparation changes host-wide UFW, SMTP egress, swap/fstab, SSH/sysctl/journald/BBR, packages, unattended-upgrades, and vnstat.
+The supported host is a dedicated, rebuildable Ubuntu 24.04 amd64 server. Current initial preparation installs the RST-required package set, an RST-named SSH key-only drop-in, and the UFW baseline. Older Route Steward releases may have left additional host-wide tuning or policy changes; current releases do not silently reverse them.
 
 RST owns:
 
@@ -93,7 +93,7 @@ An already-deployed Route is audited before overwrite. Drifted or undetermined s
 
 New Hysteria2 and WireGuard credentials are generated locally and reused by deployment. They change through an explicit remediation or replacement workflow.
 
-Subscription state belongs to one Shadowrocket ClientTarget. Each subscription-backed target uses an isolated Worker/host identity and a random 256-bit bearer token; the Worker stores only its SHA-256 hash for matching. Responses are non-cacheable.
+Subscription state belongs to one Mihomo or Shadowrocket ClientTarget. Each subscription-backed target uses an isolated Worker/host identity and a random 256-bit bearer token; the Worker stores only its SHA-256 hash for matching. Responses are non-cacheable.
 
 `rotate-subscription-token` is a `credential-change`. It requires explicit current approval, rotates only the selected ClientTarget, and remains outside generic MCP execute.
 
