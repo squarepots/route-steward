@@ -1,4 +1,4 @@
 interface:
   display_name: "Route Steward"
   short_description: "Set up private proxies on your servers with AI"
-  default_prompt: "Use $route-steward to set up and manage a private proxy on servers I control. Read the repository instructions, run capability discovery and validation, explain host changes, keep sensitive state private, and get required decisions or access from me."
+  default_prompt: "Use $route-steward to set up or manage a private proxy on servers I control."

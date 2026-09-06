@@ -35,6 +35,13 @@ func RunRequest(ctx context.Context, request Request) (Envelope, int) {
 		return Envelope{SchemaVersion: 1, Command: command, Success: false, Code: code, Data: data}, exit
 	}
 	if request.Command == "capabilities" {
+		if request.Operation != "" {
+			capability, err := CapabilityByID(request.Operation)
+			if err != nil {
+				return failure("capabilities", "capability-not-found", map[string]any{"operation": request.Operation}, 2)
+			}
+			return success("capabilities", map[string]any{"product": "route-steward", "interface": "agent-machine-surface", "capability": capability})
+		}
 		return success("capabilities", map[string]any{"product": "route-steward", "interface": "agent-machine-surface", "capabilities": Capabilities(), "drivers": DriverCapabilities()})
 	}
 	if request.Command == "bootstrap" {
@@ -67,6 +74,13 @@ func RunRequest(ctx context.Context, request Request) (Envelope, int) {
 	}
 	switch request.Command {
 	case "context":
+		if request.Target != "" {
+			data, code := SanitizedTargetContext(state.Inventory, request.Target)
+			if code != "" {
+				return failure("context", code, data, 2)
+			}
+			return success("context", data)
+		}
 		return success("context", SanitizedContext(state.Inventory))
 	case "drift":
 		report, err := DriftReport(state)

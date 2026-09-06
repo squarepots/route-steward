@@ -15,6 +15,14 @@ type mcpOperationInput struct {
 	Context   map[string]any `json:"context,omitempty"`
 }
 
+type mcpCapabilityInput struct {
+	Operation string `json:"operation,omitempty"`
+}
+
+type mcpContextInput struct {
+	Target string `json:"target,omitempty"`
+}
+
 type mcpHealthInput struct {
 	Target          string `json:"target"`
 	IncludePublicIP bool   `json:"include_public_ip,omitempty"`
@@ -37,6 +45,12 @@ func NewMCPServer(privateDir string) *mcp.Server {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}, StructuredContent: envelope, IsError: !envelope.Success}, nil
 		})
 	}
+	decodeOptional := func(raw json.RawMessage, target any) error {
+		if len(raw) == 0 || string(raw) == "null" {
+			return nil
+		}
+		return json.Unmarshal(raw, target)
+	}
 	empty := json.RawMessage(`{"type":"object","additionalProperties":false}`)
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: readOnly, IdempotentHint: true, DestructiveHint: &notDestructive, OpenWorldHint: &closed}
 	roOpen := &mcp.ToolAnnotations{ReadOnlyHint: readOnly, IdempotentHint: true, DestructiveHint: &notDestructive, OpenWorldHint: &open}
@@ -49,14 +63,30 @@ func NewMCPServer(privateDir string) *mcp.Server {
 			return envelope
 		}
 	}
-	add("route_steward_capabilities", "Discover supported Route Steward operations, drivers, effects, required context, and authorization classes.", empty, ro, runSimple("capabilities"))
+	capabilitySchema := json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","minLength":1}}}`)
+	add("route_steward_capabilities", "Discover Route Steward capabilities. Pass operation to return only that operation contract.", capabilitySchema, ro, func(ctx context.Context, raw json.RawMessage) Envelope {
+		var input mcpCapabilityInput
+		if err := decodeOptional(raw, &input); err != nil {
+			return invalidMCPEnvelope("capabilities", err)
+		}
+		envelope, _ := RunRequest(ctx, Request{Command: "capabilities", Operation: input.Operation, PrivateDir: privateDir})
+		return envelope
+	})
 	add("route_steward_bootstrap", "Initialize clean local private state. Complete state is idempotent and partial state fails closed.", empty, bootstrap, runSimple("bootstrap"))
-	add("route_steward_context", "Read sanitized project context without returning endpoints, paths, credentials, Provider URLs, or subscription tokens.", empty, ro, runSimple("context"))
+	contextSchema := json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"target":{"type":"string","minLength":1}}}`)
+	add("route_steward_context", "Read sanitized project context. Pass target to return only that object and its direct relationships.", contextSchema, ro, func(ctx context.Context, raw json.RawMessage) Envelope {
+		var input mcpContextInput
+		if err := decodeOptional(raw, &input); err != nil {
+			return invalidMCPEnvelope("context", err)
+		}
+		envelope, _ := RunRequest(ctx, Request{Command: "context", Target: input.Target, PrivateDir: privateDir})
+		return envelope
+	})
 	add("route_steward_drift", "Read sanitized desired-versus-observed route and client-render drift.", empty, ro, runSimple("drift"))
 	migrationStatusSchema := json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"target":{"type":"string","minLength":1}}}`)
 	add("route_steward_migrations", "Read sanitized resumable migration checkpoints without exposing replacement addresses or paths.", migrationStatusSchema, ro, func(ctx context.Context, raw json.RawMessage) Envelope {
 		var input mcpMigrationStatusInput
-		if err := json.Unmarshal(raw, &input); err != nil {
+		if err := decodeOptional(raw, &input); err != nil {
 			return invalidMCPEnvelope("migrations", err)
 		}
 		envelope, _ := RunRequest(ctx, Request{Command: "migrations", Target: input.Target, PrivateDir: privateDir})
