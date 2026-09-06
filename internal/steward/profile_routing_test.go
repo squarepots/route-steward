@@ -34,10 +34,10 @@ func TestGenericProfileRoutingRendersDeclaredOrder(t *testing.T) {
 	}
 	yaml := string(b)
 	for _, required := range []string{
-		"  - DOMAIN-SUFFIX,example.net,DIRECT\n",
-		"  - GEOSITE,example-category,RST-Route-route-a\n",
-		"  - GEOIP,US,RST-Route-route-a,no-resolve\n",
-		"  - PROCESS-NAME,launcher.exe,Applications\n",
+		"  - 'DOMAIN-SUFFIX,example.net,DIRECT'\n",
+		"  - 'GEOSITE,example-category,RST-Route-route-a'\n",
+		"  - 'GEOIP,US,RST-Route-route-a,no-resolve'\n",
+		"  - 'PROCESS-NAME,launcher.exe,Applications'\n",
 		"  - MATCH,Private Routes\n",
 	} {
 		if !strings.Contains(yaml, required) {
@@ -45,10 +45,10 @@ func TestGenericProfileRoutingRendersDeclaredOrder(t *testing.T) {
 		}
 	}
 	privateRule := strings.Index(yaml, "  - IP-CIDR6,fe80::/10,DIRECT,no-resolve\n")
-	processRule := strings.Index(yaml, "  - PROCESS-NAME,launcher.exe,Applications\n")
-	domainRule := strings.Index(yaml, "  - DOMAIN-SUFFIX,example.net,DIRECT\n")
-	geositeRule := strings.Index(yaml, "  - GEOSITE,example-category,RST-Route-route-a\n")
-	geoipRule := strings.Index(yaml, "  - GEOIP,US,RST-Route-route-a,no-resolve\n")
+	processRule := strings.Index(yaml, "  - 'PROCESS-NAME,launcher.exe,Applications'\n")
+	domainRule := strings.Index(yaml, "  - 'DOMAIN-SUFFIX,example.net,DIRECT'\n")
+	geositeRule := strings.Index(yaml, "  - 'GEOSITE,example-category,RST-Route-route-a'\n")
+	geoipRule := strings.Index(yaml, "  - 'GEOIP,US,RST-Route-route-a,no-resolve'\n")
 	finalRule := strings.Index(yaml, "  - MATCH,Private Routes\n")
 	if !(privateRule < processRule && processRule < domainRule && domainRule < geositeRule && geositeRule < geoipRule && geoipRule < finalRule) {
 		t.Fatalf("routing order changed:\n%s", yaml)
@@ -148,5 +148,28 @@ func TestSchemaOneInventoryUpgradesToGenericRules(t *testing.T) {
 	}
 	if !strings.Contains(text, `"schema":2`) || !strings.Contains(text, `"rules"`) {
 		t.Fatalf("schema-2 inventory was not serialized canonically: %s", text)
+	}
+}
+
+func TestSchemaOneExplicitEmptyRouteSelectionStaysEmpty(t *testing.T) {
+	var inv Inventory
+	raw := []byte(`{"schema":1,"profiles":[{"id":"empty","include_routes":[],"include_providers":[]}]}`)
+	if err := json.Unmarshal(raw, &inv); err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Profiles) != 1 || inv.Profiles[0].IncludeRoutes == nil || len(inv.Profiles[0].IncludeRoutes) != 0 {
+		t.Fatalf("explicit empty route selection changed during upgrade: %#v", inv.Profiles)
+	}
+}
+
+func TestSchemaTwoRoutingRejectsLegacyOrUnknownFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"rules":[],"china_direct":true}`,
+		`{"rules":[{"match":{"type":"geoip","value":"US","extra":true},"action":{"type":"direct"}}]}`,
+	} {
+		var routing ProfileRouting
+		if err := json.Unmarshal([]byte(raw), &routing); err == nil {
+			t.Fatalf("schema-2 routing accepted unknown field: %s", raw)
+		}
 	}
 }

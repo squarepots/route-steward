@@ -35,7 +35,7 @@ Representative calls are in [references/operations.md](references/operations.md)
 
 Capability discovery defines the currently implemented operations, drivers, and renderers. See `docs/COMPATIBILITY.md` for the readable support matrix.
 
-Host preparation changes UFW, swap/fstab, SMTP egress, SSH, sysctl, journald, packages, unattended upgrades, and vnstat. Use a dedicated, rebuildable host.
+Host preparation changes UFW, RST-required packages, SSH key-only policy, and UFW baseline. Use a dedicated, rebuildable host.
 
 ## Operating rules
 

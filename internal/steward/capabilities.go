@@ -87,19 +87,35 @@ func DriverCapabilities() map[string]any {
 
 func SanitizedContext(inv *Inventory) map[string]any {
 	enabledRoutes, enabledProviders := 0, 0
-	for _, r := range inv.Routes {
-		if r.Enabled {
+	servers := make([]map[string]any, 0, len(inv.Servers))
+	for _, server := range inv.Servers {
+		servers = append(servers, map[string]any{"id": server.ID, "roles": append([]string(nil), server.Roles...)})
+	}
+	links := make([]map[string]any, 0, len(inv.Links))
+	for _, link := range inv.Links {
+		links = append(links, map[string]any{"id": link.ID, "entry_server": link.EntryServer, "exit_server": link.ExitServer, "enabled": link.Enabled})
+	}
+	routes := make([]map[string]any, 0, len(inv.Routes))
+	for _, route := range inv.Routes {
+		if route.Enabled {
 			enabledRoutes++
 		}
+		item := map[string]any{"id": route.ID, "kind": route.Kind, "entry_server": route.EntryServer, "exit_server": route.ExitServer, "enabled": route.Enabled, "state": route.State}
+		if route.Link != nil {
+			item["link"] = *route.Link
+		}
+		routes = append(routes, item)
 	}
-	for _, p := range inv.Providers {
-		if p.Enabled {
+	providers := make([]map[string]any, 0, len(inv.Providers))
+	for _, provider := range inv.Providers {
+		if provider.Enabled {
 			enabledProviders++
 		}
+		providers = append(providers, map[string]any{"id": provider.ID, "enabled": provider.Enabled})
 	}
 	profiles := make([]map[string]any, 0, len(inv.Profiles))
-	for _, p := range inv.Profiles {
-		routing := effectiveProfileRouting(p)
+	for _, profile := range inv.Profiles {
+		routing := effectiveProfileRouting(profile)
 		rules := make([]map[string]any, 0, len(routing.Rules))
 		for _, rule := range routing.Rules {
 			match := map[string]string{"type": rule.Match.Type, "value": rule.Match.Value}
@@ -109,23 +125,32 @@ func SanitizedContext(inv *Inventory) map[string]any {
 			}
 			rules = append(rules, map[string]any{"match": match, "action": action})
 		}
-		profiles = append(profiles, map[string]any{"id": p.ID, "routing": map[string]any{"rules": rules}})
+		profiles = append(profiles, map[string]any{"id": profile.ID, "include_routes": append([]string(nil), profile.IncludeRoutes...), "include_providers": append([]string(nil), profile.IncludeProviders...), "routing": map[string]any{"rules": rules}})
 	}
 	targets := make([]map[string]any, 0, len(inv.ClientTargets))
 	processNameCount := 0
-	for _, t := range inv.ClientTargets {
-		processNameCount += len(t.MihomoProcessNames)
-		target := map[string]any{"id": t.ID, "profile": t.Profile, "renderer": t.Renderer, "delivery": t.Delivery}
-		if t.Renderer == "mihomo" {
-			target["mihomo_process_name_count"] = len(t.MihomoProcessNames)
+	for _, target := range inv.ClientTargets {
+		processNameCount += len(target.MihomoProcessNames)
+		item := map[string]any{"id": target.ID, "profile": target.Profile, "renderer": target.Renderer, "delivery": target.Delivery, "subscription_initialized": target.SubscriptionSecretRef != ""}
+		if target.Renderer == "mihomo" {
+			item["mihomo_process_name_count"] = len(target.MihomoProcessNames)
 		}
-		targets = append(targets, target)
+		if target.Renderer == "hysteria2" {
+			item["route"] = target.Route
+		}
+		targets = append(targets, item)
 	}
 	operations := make([]map[string]string, 0, len(Capabilities()))
-	for _, c := range Capabilities() {
-		operations = append(operations, map[string]string{"id": c.ID, "state": c.State, "authorization_class": c.AuthorizationClass})
+	for _, capability := range Capabilities() {
+		operations = append(operations, map[string]string{"id": capability.ID, "state": capability.State, "authorization_class": capability.AuthorizationClass})
 	}
-	return map[string]any{"schema_version": 1, "inventory_schema": inv.Schema, "counts": map[string]int{"servers": len(inv.Servers), "links": len(inv.Links), "routes": len(inv.Routes), "enabled_routes": enabledRoutes, "providers": len(inv.Providers), "enabled_providers": enabledProviders, "profiles": len(inv.Profiles), "client_targets": len(inv.ClientTargets), "mihomo_process_names": processNameCount}, "profiles": profiles, "client_targets": targets, "supported_operations": operations}
+	return map[string]any{
+		"schema_version":   1,
+		"inventory_schema": inv.Schema,
+		"counts":           map[string]int{"servers": len(inv.Servers), "links": len(inv.Links), "routes": len(inv.Routes), "enabled_routes": enabledRoutes, "providers": len(inv.Providers), "enabled_providers": enabledProviders, "profiles": len(inv.Profiles), "client_targets": len(inv.ClientTargets), "mihomo_process_names": processNameCount},
+		"servers":          servers, "links": links, "routes": routes, "providers": providers, "profiles": profiles, "client_targets": targets,
+		"supported_operations": operations,
+	}
 }
 
 func sortedUnique(values []string) []string {

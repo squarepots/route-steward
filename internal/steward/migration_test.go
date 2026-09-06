@@ -219,10 +219,10 @@ func TestMigrationSwitchesAndRollsBackHeadlessRouteSelection(t *testing.T) {
 	}
 }
 
-func TestMigrationUpdatesExplicitProfileServiceBindings(t *testing.T) {
+func TestMigrationUpdatesExplicitProfileRoutingRules(t *testing.T) {
 	state, source, input := migrationFixture(t, "direct", false)
 	profile := findProfile(state.Inventory, "primary")
-	profile.Routing = &ProfileRouting{ServiceRoutes: []ProfileServiceRoute{{Service: "openai", Route: source.ID}}}
+	profile.Routing = &ProfileRouting{Rules: []ProfileRoutingRule{{Match: ProfileRoutingMatch{Type: "geosite", Value: "example-category"}, Action: ProfileRoutingAction{Type: "route", Route: source.ID}}}}
 	if err := state.Save(false); err != nil {
 		t.Fatal(err)
 	}
@@ -231,12 +231,12 @@ func TestMigrationUpdatesExplicitProfileServiceBindings(t *testing.T) {
 		t.Fatalf("migration did not complete: %#v err=%v", result, err)
 	}
 	profile = findProfile(state.Inventory, "primary")
-	if profile == nil || profile.Routing == nil || len(profile.Routing.ServiceRoutes) != 1 || profile.Routing.ServiceRoutes[0].Route != result.ReplacementRoute {
-		t.Fatalf("explicit service binding did not follow replacement Route: %#v", profile)
+	if profile == nil || profile.Routing == nil || len(profile.Routing.Rules) != 1 || profile.Routing.Rules[0].Action.Route != result.ReplacementRoute {
+		t.Fatalf("explicit routing rule did not follow replacement Route: %#v", profile)
 	}
 	artifact, err := os.ReadFile(filepath.Join(state.Inventory.Delivery.Directory, "desktop.yaml"))
-	if err != nil || !strings.Contains(string(artifact), "GEOSITE,openai,RST-Route-"+result.ReplacementRoute) {
-		t.Fatalf("migrated artifact did not use the replacement service selector: err=%v artifact=%s", err, artifact)
+	if err != nil || !strings.Contains(string(artifact), "'GEOSITE,example-category,RST-Route-"+result.ReplacementRoute+"'") {
+		t.Fatalf("migrated artifact did not use the replacement route selector: err=%v artifact=%s", err, artifact)
 	}
 }
 

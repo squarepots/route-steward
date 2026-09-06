@@ -1,24 +1,17 @@
 package steward
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 )
 
 type ProfileRouting struct {
 	Rules []ProfileRoutingRule `json:"rules,omitempty"`
-	// Compatibility projections are not schema-2 state. They keep released
-	// internal migration/test paths readable while canonical state uses Rules.
-	ChinaDirect   bool                  `json:"-"`
-	ServiceRoutes []ProfileServiceRoute `json:"-"`
-}
-
-type ProfileServiceRoute struct {
-	Service string
-	Route   string
 }
 
 type ProfileRoutingRule struct {
@@ -41,11 +34,18 @@ func (routing *ProfileRouting) UnmarshalJSON(data []byte) error {
 		Rules []ProfileRoutingRule `json:"rules,omitempty"`
 	}
 	var decoded disk
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("routing must contain one JSON object")
+		}
 		return err
 	}
 	routing.Rules = decoded.Rules
-	routing.refreshCompatibilityProjection()
 	return nil
 }
 
@@ -60,19 +60,6 @@ func (routing ProfileRouting) MarshalJSON() ([]byte, error) {
 	return json.Marshal(disk{Rules: normalized.Rules})
 }
 
-func (routing *ProfileRouting) refreshCompatibilityProjection() {
-	routing.ChinaDirect = false
-	routing.ServiceRoutes = []ProfileServiceRoute{}
-	for _, rule := range routing.Rules {
-		if rule.Action.Type == "route" {
-			routing.ServiceRoutes = append(routing.ServiceRoutes, ProfileServiceRoute{
-				Service: rule.Match.Value,
-				Route:   rule.Action.Route,
-			})
-		}
-	}
-}
-
 func defaultProfileRouting() *ProfileRouting {
 	return &ProfileRouting{Rules: []ProfileRoutingRule{}}
 }
@@ -81,11 +68,7 @@ func cloneProfileRouting(routing *ProfileRouting) *ProfileRouting {
 	if routing == nil {
 		return nil
 	}
-	out := &ProfileRouting{
-		Rules:         make([]ProfileRoutingRule, len(routing.Rules)),
-		ChinaDirect:   routing.ChinaDirect,
-		ServiceRoutes: append([]ProfileServiceRoute(nil), routing.ServiceRoutes...),
-	}
+	out := &ProfileRouting{Rules: make([]ProfileRoutingRule, len(routing.Rules))}
 	copy(out.Rules, routing.Rules)
 	return out
 }
@@ -95,28 +78,6 @@ func normalizeProfileRouting(routing *ProfileRouting) (*ProfileRouting, error) {
 		return nil, errors.New("routing must be an object")
 	}
 	out := cloneProfileRouting(routing)
-	if len(out.Rules) == 0 && len(out.ServiceRoutes) > 0 {
-		for _, binding := range out.ServiceRoutes {
-			out.Rules = append(out.Rules, ProfileRoutingRule{
-				Match:  ProfileRoutingMatch{Type: "geosite", Value: binding.Service},
-				Action: ProfileRoutingAction{Type: "route", Route: binding.Route},
-			})
-		}
-	} else if len(out.Rules) > 0 && len(out.ServiceRoutes) > 0 {
-		index := 0
-		for i := range out.Rules {
-			if out.Rules[i].Action.Type != "route" {
-				continue
-			}
-			if index < len(out.ServiceRoutes) {
-				out.Rules[i].Action.Route = out.ServiceRoutes[index].Route
-			}
-			index++
-		}
-	}
-	if len(out.Rules) == 0 && out.ChinaDirect {
-		out.Rules = append(out.Rules, legacyChinaDirectRules()...)
-	}
 	seen := map[string]bool{}
 	for i := range out.Rules {
 		rule := &out.Rules[i]
@@ -150,7 +111,6 @@ func normalizeProfileRouting(routing *ProfileRouting) (*ProfileRouting, error) {
 		}
 		seen[key] = true
 	}
-	out.refreshCompatibilityProjection()
 	return out, nil
 }
 
@@ -187,7 +147,7 @@ func profileRoutingFromContext(context map[string]any) (*ProfileRouting, bool, e
 		return normalized, true, nil
 	}
 	if hasField(context, "policy") {
-		switch strings.ToLower(stringField(context, "policy")) {
+		switch strings.ToLower(strings.TrimSpace(stringField(context, "policy"))) {
 		case "privacy", "":
 			return defaultProfileRouting(), true, nil
 		case "balanced-cn":
@@ -202,9 +162,6 @@ func profileRoutingFromContext(context map[string]any) (*ProfileRouting, bool, e
 
 func effectiveProfileRouting(profile Profile) ProfileRouting {
 	if profile.Routing == nil {
-		if strings.EqualFold(profile.Policy, "balanced-cn") {
-			return ProfileRouting{Rules: legacyChinaDirectRules()}
-		}
 		return ProfileRouting{Rules: []ProfileRoutingRule{}}
 	}
 	routing, err := normalizeProfileRouting(profile.Routing)

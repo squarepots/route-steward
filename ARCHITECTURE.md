@@ -27,7 +27,7 @@ All supported agent runtimes call the same executable and Go engine.
 - **Route** — logical network path offered to ClientTargets. A `direct` Route uses one Server; a `relay` Route references ingress Server, egress Server, and Link. Initial ingress driver: `hysteria2`.
 - **Provider** — optional upstream third-party node source. Initial source type: generic `mihomo-http`.
 - **Policy** — legacy schema-1 routing input retained for compatibility.
-- **Profile** — reusable Route and Provider selection with China/service routing.
+- **Profile** — reusable Route and Provider selection with ordered generic routing.
 - **ClientTarget** — renderer and delivery settings for one Profile. Renderers: `mihomo`, `karing`, `shadowrocket`, and `hysteria2`.
 - **Private subscription** — delivery state for one Shadowrocket ClientTarget.
 
@@ -46,11 +46,11 @@ All supported agent runtimes call the same executable and Go engine.
 
 ## State compatibility
 
-Inventory schema `1` stores Servers, Links, Routes, Providers, Profiles, and ClientTargets. It also accepts legacy Profile policy fields from earlier schema-1 releases. Product SemVer is stored separately in `version.txt`.
+Inventory schema `2` stores Servers, Links, Routes, Providers, Profiles, and ClientTargets. Schema-1 state is translated at load time; legacy policy and China/service fields are not current state. Product SemVer is stored separately in `version.txt`.
 
 ## Neutral bootstrap
 
-Bootstrap creates empty schema-1 inventory, secret index, observed state, and private output directories. The agent adds objects after gathering the user's setup.
+Bootstrap creates empty schema-2 inventory, secret index, observed state, and private output directories. The agent adds objects after gathering the user's setup.
 
 ## Preflight
 
@@ -92,7 +92,7 @@ relay:
 client → Hysteria2 entry Server → WireGuard Link → exit Server/NAT → declared exit
 ```
 
-Each Link receives an RST-named interface, UDP port, and subnet. Deployment and uninstall manage RST-owned resources and named policy files. Initial host preparation also has the global effects documented in [Operations](OPERATIONS.md#remote-ownership), so supported hosts are dedicated and rebuildable.
+Each Link receives an RST-named interface, UDP port, and subnet. Deployment and uninstall manage RST-owned resources and named policy files. Initial host preparation installs only the RST-required package, SSH, and firewall baseline documented in [Operations](OPERATIONS.md#remote-ownership). Supported hosts remain dedicated and rebuildable until broader host sharing is proven.
 
 A Route may use a 2–8-port Hysteria UDP hopping range. Inventory, deployment, audit, client rendering, and migration all carry that range. A relay-exit replacement reserves a same-width, non-overlapping range while both paths are live.
 
@@ -147,6 +147,6 @@ Infrastructure migration keeps the current Route available while replacement cap
 4. render/update client delivery;
 5. leave old capacity available until the user requests retirement.
 
-Recovery verifies the encrypted archive manifest and paths, relocates private SSH material, validates schema-1 state, and resets observed evidence. The user decides any later remote change through the usual preflight.
+Recovery verifies the encrypted archive manifest and paths, relocates private SSH material, validates current state, and resets observed evidence. The user decides any later remote change through the usual preflight.
 
 See `docs/COMPATIBILITY.md` for current support and `SECURITY.md` / `docs/THREAT-MODEL.md` for security boundaries.

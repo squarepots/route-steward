@@ -24,7 +24,6 @@ type Inventory struct {
 	Links         []Link         `json:"links"`
 	Routes        []Route        `json:"routes"`
 	Providers     []Provider     `json:"providers"`
-	Policies      []Policy       `json:"-"`
 	Profiles      []Profile      `json:"profiles"`
 	ClientTargets []ClientTarget `json:"client_targets"`
 }
@@ -141,15 +140,8 @@ type Provider struct {
 	Enabled         bool   `json:"enabled"`
 }
 
-type Policy struct {
-	ID          string `json:"-"`
-	Description string `json:"-"`
-	DNSMode     string `json:"-"`
-}
-
 type Profile struct {
 	ID               string          `json:"id"`
-	Policy           string          `json:"-"`
 	IncludeRoutes    []string        `json:"include_routes"`
 	IncludeProviders []string        `json:"include_providers"`
 	Routing          *ProfileRouting `json:"routing,omitempty"`

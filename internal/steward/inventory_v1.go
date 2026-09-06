@@ -93,13 +93,17 @@ func upgradeInventoryV1(data []byte) (*Inventory, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Profile %q has invalid legacy routing: %w", profile.ID, err)
 		}
-		includeRoutes := append([]string(nil), profile.IncludeRoutes...)
-		if includeRoutes == nil {
+		var includeRoutes []string
+		if profile.IncludeRoutes == nil {
 			includeRoutes = []string{"*"}
+		} else {
+			includeRoutes = append([]string{}, profile.IncludeRoutes...)
 		}
-		includeProviders := append([]string(nil), profile.IncludeProviders...)
-		if includeProviders == nil {
+		var includeProviders []string
+		if profile.IncludeProviders == nil {
 			includeProviders = []string{}
+		} else {
+			includeProviders = append([]string{}, profile.IncludeProviders...)
 		}
 		profiles = append(profiles, Profile{ID: profile.ID, IncludeRoutes: includeRoutes, IncludeProviders: includeProviders, Routing: routing})
 	}
@@ -142,4 +146,3 @@ func legacyPolicyIDV1(policy string) bool {
 		return false
 	}
 }
-func legacyPolicyID(policy string) bool { return legacyPolicyIDV1(policy) }

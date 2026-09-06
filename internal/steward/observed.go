@@ -204,7 +204,7 @@ func DriftReport(state *State) (map[string]any, error) {
 		} else if category == "undetermined" {
 			observedValue = "undetermined"
 		}
-		items = append(items, map[string]any{"id": route.ID, "category": category, "severity": driftSeverity(category), "desired": "enabled", "observed": observedValue})
+		items = append(items, map[string]any{"id": route.ID, "category": category, "severity": driftSeverity(category), "desired": "enabled", "observed": observedValue, "observed_at": value.AuditedAt})
 	}
 	clientItems, err := clientRenderDrift(state)
 	if err != nil {
@@ -230,10 +230,6 @@ func clientRenderDrift(state *State) ([]map[string]any, error) {
 			return nil, err
 		}
 	}
-	fingerprint, err := canonicalFingerprint(state)
-	if err != nil {
-		return nil, err
-	}
 	byID := map[string]renderManifestEntry{}
 	for _, entry := range manifest.Targets {
 		byID[entry.ID] = entry
@@ -242,6 +238,10 @@ func clientRenderDrift(state *State) ([]map[string]any, error) {
 	sort.Slice(targets, func(i, j int) bool { return targets[i].ID < targets[j].ID })
 	out := []map[string]any{}
 	for _, target := range targets {
+		fingerprint, err := clientTargetFingerprint(state, target.ID)
+		if err != nil {
+			return nil, err
+		}
 		category := "in-sync"
 		entry, ok := byID[target.ID]
 		if !ok || entry.InputFingerprint != fingerprint || filepath.Base(entry.FileName) != entry.FileName {

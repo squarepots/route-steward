@@ -376,16 +376,16 @@ func TestMihomoProcessRoutingIsTargetScopedAndSanitized(t *testing.T) {
 	for _, fragment := range []string{
 		"find-process-mode: strict\n",
 		"  - name: Applications\n    type: select\n    proxies:\n      - DIRECT\n      - Private Routes\n",
-		"  - PROCESS-NAME,com.example.app,Applications\n",
-		"  - PROCESS-NAME,launcher.exe,Applications\n",
+		"  - 'PROCESS-NAME,com.example.app,Applications'\n",
+		"  - 'PROCESS-NAME,launcher.exe,Applications'\n",
 	} {
 		if !strings.Contains(yaml, fragment) {
 			t.Fatalf("Mihomo process routing output missed %q:\n%s", fragment, yaml)
 		}
 	}
 	privateRule := strings.Index(yaml, "  - IP-CIDR6,fe80::/10,DIRECT,no-resolve\n")
-	processRule := strings.Index(yaml, "  - PROCESS-NAME,com.example.app,Applications\n")
-	geoRule := strings.Index(yaml, "  - GEOSITE,CN,DIRECT\n")
+	processRule := strings.Index(yaml, "  - 'PROCESS-NAME,com.example.app,Applications'\n")
+	geoRule := strings.Index(yaml, "  - 'GEOSITE,CN,DIRECT'\n")
 	if privateRule < 0 || processRule < 0 || geoRule < 0 || !(privateRule < processRule && processRule < geoRule) {
 		t.Fatalf("process rules were not ordered after private direct and before geography:\n%s", yaml)
 	}
