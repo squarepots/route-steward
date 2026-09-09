@@ -58,6 +58,26 @@ func deployRouteWithoutRender(ctx context.Context, state *State, routeID string)
 	return deployRoute(ctx, state, routeID, true, false)
 }
 
+func deploymentAuditAllowsMutation(route *Route, current AuditEvidence) error {
+	if current.Category == "in-sync" {
+		return nil
+	}
+	if current.Category == "service-missing" && route.State != "deployed" {
+		return nil
+	}
+	return errors.New("remote Route state is not safe to overwrite")
+}
+
+func markRouteDeploying(state *State, routeID string) error {
+	candidate := cloneInventory(state.Inventory)
+	route := findRoute(candidate, routeID)
+	if route == nil {
+		return fmt.Errorf("unknown Route %q", routeID)
+	}
+	route.State = "deploying"
+	return saveCandidate(state, candidate, false)
+}
+
 func deployRoute(ctx context.Context, state *State, routeID string, skipClientValidation, renderClients bool) (map[string]any, error) {
 	route := findRoute(state.Inventory, routeID)
 	if route == nil {
@@ -65,20 +85,13 @@ func deployRoute(ctx context.Context, state *State, routeID string, skipClientVa
 	}
 
 	current := AuditRoute(ctx, state, routeID)
-	if route.State == "deployed" {
-		if current.Category != "in-sync" {
-			return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: errors.New("existing deployed Route has drift; refusing to overwrite unknown remote state")}
-		}
-	} else {
-		switch current.Category {
-		case "in-sync":
-			return adoptVerifiedRoute(state, route, current, skipClientValidation, renderClients)
-		case "service-missing":
-			// A missing managed service is the expected remote state for a fresh pending Route.
-		default:
-			return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: errors.New("pending Route remote state is not safe to overwrite")}
-		}
+	if err := deploymentAuditAllowsMutation(route, current); err != nil {
+		return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: err}
 	}
+	if err := markRouteDeploying(state, routeID); err != nil {
+		return nil, &operationStageError{Stage: "deployment-intent", StateChanged: "remote-state-unchanged", Retry: "deploy-route", Err: err}
+	}
+	route = findRoute(state.Inventory, routeID)
 
 	lines, err := performRouteOperation(ctx, state, *route, false)
 	if err != nil {
