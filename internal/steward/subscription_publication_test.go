@@ -8,7 +8,7 @@ import (
 )
 
 func TestVerifySubscriptionEndpointAcceptsSupportedLargeBodies(t *testing.T) {
-	for _, size := range []int{8192, 8193, subscriptionSecretChunkBytes*subscriptionMaxChunks} {
+	for _, size := range []int{8192, 8193, subscriptionSecretChunkBytes * subscriptionMaxChunks} {
 		t.Run(strings.Repeat("x", min(size, 32)), func(t *testing.T) {
 			body := strings.Repeat("x", size)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
