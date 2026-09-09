@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: validation-lockfile-${{ github.sha }}
   cancel-in-progress: true
 
 permissions:
