@@ -58,34 +58,62 @@ func deployRouteWithoutRender(ctx context.Context, state *State, routeID string)
 	return deployRoute(ctx, state, routeID, true, false)
 }
 
+func deploymentAuditAllowsMutation(route *Route, current AuditEvidence) error {
+	if current.Category == "in-sync" {
+		return nil
+	}
+	if current.Category == "service-missing" && route.State != "deployed" {
+		return nil
+	}
+	return errors.New("remote Route state is not safe to overwrite")
+}
+
+func markRouteDeploying(state *State, routeID string) error {
+	candidate := cloneInventory(state.Inventory)
+	route := findRoute(candidate, routeID)
+	if route == nil {
+		return fmt.Errorf("unknown Route %q", routeID)
+	}
+	route.State = "deploying"
+	return saveCandidate(state, candidate, false)
+}
+
 func deployRoute(ctx context.Context, state *State, routeID string, skipClientValidation, renderClients bool) (map[string]any, error) {
 	route := findRoute(state.Inventory, routeID)
 	if route == nil {
 		return nil, fmt.Errorf("unknown Route %q", routeID)
 	}
-	if route.State == "deployed" {
-		current := AuditRoute(ctx, state, routeID)
-		if current.Category != "in-sync" {
-			return nil, errors.New("existing deployed Route has drift; refusing to overwrite unknown remote state")
-		}
+
+	current := AuditRoute(ctx, state, routeID)
+	if err := deploymentAuditAllowsMutation(route, current); err != nil {
+		return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: err}
 	}
+	if err := markRouteDeploying(state, routeID); err != nil {
+		return nil, &operationStageError{Stage: "deployment-intent", StateChanged: "remote-state-unchanged", Retry: "deploy-route", Err: err}
+	}
+	route = findRoute(state.Inventory, routeID)
+
 	lines, err := performRouteOperation(ctx, state, *route, false)
 	if err != nil {
-		return nil, errors.New("deterministic route operation failed")
+		return nil, &operationStageError{Stage: "remote-deployment", StateChanged: "remote-state-undetermined", Retry: "deploy-route", Err: errors.New("route deployment did not produce verified remote state")}
 	}
 	evidence := parseAuditEvidence(state.Inventory, *route, lines)
 	if evidence.Status != "healthy" {
-		return nil, errors.New("route deployment completed but post-deploy audit is not healthy")
+		return nil, &operationStageError{Stage: "remote-deployment", StateChanged: "remote-state-undetermined", Retry: "deploy-route", Err: errors.New("route deployment completed but post-deploy audit is not healthy")}
 	}
+	return adoptVerifiedRoute(state, route, evidence, skipClientValidation, renderClients)
+}
+
+func adoptVerifiedRoute(state *State, route *Route, evidence AuditEvidence, skipClientValidation, renderClients bool) (map[string]any, error) {
 	candidate := cloneInventory(state.Inventory)
 	candidateRoute := findRoute(candidate, route.ID)
 	candidateRoute.Enabled = true
 	candidateRoute.State = "deployed"
 	if err := saveCandidate(state, candidate, false); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "local-route-state", StateChanged: "route-deployed-verified", Retry: "deploy-route", Err: err}
 	}
 	if _, err := SetObservedRoute(state, route.ID, evidence.Status, evidence.Category, deref(evidence.ActualEgressIPv4), deref(evidence.HysteriaVersion), deref(evidence.WireGuardVersion)); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "observed-state", StateChanged: "route-deployed-local-state-committed", Retry: "audit", Err: err}
 	}
 	result := map[string]any{"route": route.ID, "state": "deployed", "enabled": true, "validation": evidence.Sanitized()}
 	if renderClients {
