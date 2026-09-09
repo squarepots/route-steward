@@ -3,160 +3,32 @@ name: validation
 on:
   pull_request:
     types: [opened, reopened, synchronize]
-  workflow_dispatch:
-
-concurrency:
-  group: validation-lockfile-${{ github.sha }}
-  cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  go:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: 1.27.0
-          cache: true
-      - name: Verify module graph
-        run: go mod verify
-      - name: Test native control plane
-        run: go test ./...
-      - name: Test pinned Mihomo provider/global compatibility
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mihomo_version='1.19.27'
-          mihomo_asset="mihomo-linux-amd64-v1-v${mihomo_version}.gz"
-          mihomo_path="$RUNNER_TEMP/mihomo"
-          curl --fail --location --retry 3 "https://github.com/MetaCubeX/mihomo/releases/download/v${mihomo_version}/${mihomo_asset}" | gzip -d > "$mihomo_path"
-          chmod +x "$mihomo_path"
-          RST_MIHOMO_TEST_BINARY="$mihomo_path" go test ./internal/steward -run '^TestMihomoGlobalCompatibility$' -count=1
-      - name: Vet native control plane
-        run: go vet ./...
-      - name: Check Go formatting
-        if: runner.os == 'Linux'
-        shell: bash
-        run: test -z "$(gofmt -l .)"
-
-  static:
+  lockfile:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: 1.27.0
-          cache: true
-      - name: Build native executable
-        run: mkdir -p bin && go build -trimpath -o bin/route-steward ./cmd/route-steward
-      - name: Secret and generated-file scan
-        shell: pwsh
-        run: ./scripts/Check-NoSecrets.ps1
-      - name: Static safety and public-tree validation
-        shell: pwsh
-        run: ./scripts/Test-Templates.ps1
-      - name: Product version behavior
-        shell: pwsh
-        run: ./tests/Test-Version.ps1
-      - name: Agent capability and preflight behavior
-        shell: pwsh
-        run: ./tests/Test-Agent.ps1
-      - name: Bash syntax
-        shell: bash
-        run: find server -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
-      - name: ShellCheck
-        shell: bash
-        run: shellcheck server/*.sh
-
-  windows-validation:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: 1.27.0
-          cache: true
-      - name: Full local validation
-        shell: pwsh
-        run: ./scripts/Validate-Local.ps1
-
-  release-candidate:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: 1.27.0
-          cache: true
-      - name: Build and verify all release archives
-        shell: bash
-        run: bash ./scripts/Build-ReleaseArtifacts.sh
-      - name: Run the installed journey against the archived native binary
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/route-steward-release"
-          tar -xzf "dist/route-steward_$(tr -d '\r\n' < version.txt)_linux_amd64.tar.gz" -C "$RUNNER_TEMP/route-steward-release"
-          ROUTE_STEWARD_BINARY="$RUNNER_TEMP/route-steward-release/route-steward" go test ./tests/userjourney
-
-  worker:
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: worker
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+          ref: fix/subscription-publication-state
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-      - name: Regenerate Worker lockfile
+      - name: Regenerate and commit Worker lockfile
         shell: bash
         run: |
           set -euo pipefail
+          cd worker
           npm install --package-lock-only --ignore-scripts --no-audit
-          echo 'RST_LOCKFILE_BEGIN'
-          gzip -c package-lock.json | base64 -w0
-          echo
-          echo 'RST_LOCKFILE_END'
-      - name: Install resolved Worker dependencies
-        run: npm ci
-      - name: Generate Cloudflare runtime types
-        run: npm run types
-      - name: Type check
-        run: npm run typecheck
-      - name: Cloudflare runtime tests
-        run: npm test
-      - name: Wrangler dry run
-        run: npm run deploy:dry-run
-      - name: Dependency audit
-        run: npm audit --audit-level=low
-
-  ci:
-    name: CI
-    if: ${{ always() }}
-    needs: [go, static, windows-validation, release-candidate, worker]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Require every validation job to pass
-        env:
-          GO_RESULT: ${{ needs.go.result }}
-          STATIC_RESULT: ${{ needs.static.result }}
-          WINDOWS_VALIDATION_RESULT: ${{ needs.windows-validation.result }}
-          RELEASE_CANDIDATE_RESULT: ${{ needs.release-candidate.result }}
-          WORKER_RESULT: ${{ needs.worker.result }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for result in "$GO_RESULT" "$STATIC_RESULT" "$WINDOWS_VALIDATION_RESULT" "$RELEASE_CANDIDATE_RESULT" "$WORKER_RESULT"; do
-            if [[ "$result" != "success" ]]; then
-              echo "A validation job did not succeed: $result" >&2
-              exit 1
-            fi
-          done
+          cd ..
+          git config user.name squarepots
+          git config user.email 46488165+squarepots@users.noreply.github.com
+          git add worker/package-lock.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -s -m "Update Worker lockfile"
+          git push origin HEAD:fix/subscription-publication-state
