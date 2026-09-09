@@ -116,9 +116,16 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - name: Install pinned Worker dependencies
+      - name: Regenerate Worker lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit
+          echo 'RST_LOCKFILE_BEGIN'
+          gzip -c package-lock.json | base64 -w0
+          echo
+          echo 'RST_LOCKFILE_END'
+      - name: Install resolved Worker dependencies
         run: npm ci
       - name: Generate Cloudflare runtime types
         run: npm run types
