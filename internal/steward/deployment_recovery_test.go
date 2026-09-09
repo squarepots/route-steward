@@ -6,37 +6,47 @@ import (
 	"testing"
 )
 
-func TestAdoptVerifiedRouteCommitsPendingRouteWithoutRemoteMutation(t *testing.T) {
+func TestDeploymentAuditAllowsOnlyKnownRemoteStates(t *testing.T) {
+	route := &Route{State: "pending"}
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err != nil {
+		t.Fatalf("fresh pending Route rejected service-missing state: %v", err)
+	}
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "in-sync"}); err != nil {
+		t.Fatalf("pending Route rejected verified in-sync state: %v", err)
+	}
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "undetermined"}); err == nil {
+		t.Fatal("pending Route accepted undetermined remote state")
+	}
+
+	route.State = "deploying"
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err != nil {
+		t.Fatalf("retry checkpoint rejected known missing service: %v", err)
+	}
+
+	route.State = "deployed"
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err == nil {
+		t.Fatal("deployed Route accepted a missing remote service")
+	}
+}
+
+func TestMarkRouteDeployingPersistsRetryCheckpoint(t *testing.T) {
 	state, route := healthFixture(t, "direct", false)
-	pending := findRoute(state.Inventory, route.ID)
-	pending.Enabled = false
-	pending.State = "pending"
+	current := findRoute(state.Inventory, route.ID)
+	current.Enabled = false
+	current.State = "pending"
 	if err := state.Save(false); err != nil {
 		t.Fatal(err)
 	}
-
-	evidence := AuditEvidence{
-		Route:                     route.ID,
-		Status:                    "healthy",
-		Category:                  "in-sync",
-		ActualEgressIPv4:          stringPointer("192.0.2.10"),
-		EgressMatchesDeclaredExit: true,
-		HysteriaVersion:           stringPointer("v2.12.2"),
+	if err := markRouteDeploying(state, route.ID); err != nil {
+		t.Fatal(err)
 	}
-	result, err := adoptVerifiedRoute(state, pending, evidence, true, false)
+	reloaded, err := LoadState(state.PrivateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	current := findRoute(state.Inventory, route.ID)
-	if current == nil || !current.Enabled || current.State != "deployed" {
-		t.Fatalf("verified remote state was not adopted locally: %#v", current)
-	}
-	if result["state"] != "deployed" {
-		t.Fatalf("unexpected adoption result: %#v", result)
-	}
-	observed, err := ReadObserved(state.PrivateDir, false)
-	if err != nil || len(observed.Routes) != 1 || observed.Routes[0].Category != "in-sync" {
-		t.Fatalf("verified adoption did not persist observed state: %#v err=%v", observed, err)
+	checkpoint := findRoute(reloaded.Inventory, route.ID)
+	if checkpoint == nil || checkpoint.State != "deploying" || checkpoint.Enabled {
+		t.Fatalf("deployment retry checkpoint was not persisted: %#v", checkpoint)
 	}
 }
 
