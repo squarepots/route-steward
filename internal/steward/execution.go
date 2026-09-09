@@ -63,29 +63,44 @@ func deployRoute(ctx context.Context, state *State, routeID string, skipClientVa
 	if route == nil {
 		return nil, fmt.Errorf("unknown Route %q", routeID)
 	}
+
+	current := AuditRoute(ctx, state, routeID)
 	if route.State == "deployed" {
-		current := AuditRoute(ctx, state, routeID)
 		if current.Category != "in-sync" {
-			return nil, errors.New("existing deployed Route has drift; refusing to overwrite unknown remote state")
+			return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: errors.New("existing deployed Route has drift; refusing to overwrite unknown remote state")}
+		}
+	} else {
+		switch current.Category {
+		case "in-sync":
+			return adoptVerifiedRoute(state, route, current, skipClientValidation, renderClients)
+		case "service-missing":
+			// A missing managed service is the expected remote state for a fresh pending Route.
+		default:
+			return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: errors.New("pending Route remote state is not safe to overwrite")}
 		}
 	}
+
 	lines, err := performRouteOperation(ctx, state, *route, false)
 	if err != nil {
-		return nil, errors.New("deterministic route operation failed")
+		return nil, &operationStageError{Stage: "remote-deployment", StateChanged: "remote-state-undetermined", Retry: "deploy-route", Err: errors.New("route deployment did not produce verified remote state")}
 	}
 	evidence := parseAuditEvidence(state.Inventory, *route, lines)
 	if evidence.Status != "healthy" {
-		return nil, errors.New("route deployment completed but post-deploy audit is not healthy")
+		return nil, &operationStageError{Stage: "remote-deployment", StateChanged: "remote-state-undetermined", Retry: "deploy-route", Err: errors.New("route deployment completed but post-deploy audit is not healthy")}
 	}
+	return adoptVerifiedRoute(state, route, evidence, skipClientValidation, renderClients)
+}
+
+func adoptVerifiedRoute(state *State, route *Route, evidence AuditEvidence, skipClientValidation, renderClients bool) (map[string]any, error) {
 	candidate := cloneInventory(state.Inventory)
 	candidateRoute := findRoute(candidate, route.ID)
 	candidateRoute.Enabled = true
 	candidateRoute.State = "deployed"
 	if err := saveCandidate(state, candidate, false); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "local-route-state", StateChanged: "route-deployed-verified", Retry: "deploy-route", Err: err}
 	}
 	if _, err := SetObservedRoute(state, route.ID, evidence.Status, evidence.Category, deref(evidence.ActualEgressIPv4), deref(evidence.HysteriaVersion), deref(evidence.WireGuardVersion)); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "observed-state", StateChanged: "route-deployed-local-state-committed", Retry: "audit", Err: err}
 	}
 	result := map[string]any{"route": route.ID, "state": "deployed", "enabled": true, "validation": evidence.Sanitized()}
 	if renderClients {
