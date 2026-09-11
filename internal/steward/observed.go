@@ -211,6 +211,11 @@ func DriftReport(state *State) (map[string]any, error) {
 		return nil, err
 	}
 	items = append(items, clientItems...)
+	publicationItems, err := subscriptionPublicationDrift(state)
+	if err != nil {
+		return nil, err
+	}
+	items = append(items, publicationItems...)
 	errorsCount, warnings := 0, 0
 	for _, item := range items {
 		if item["severity"] == "error" {
