@@ -20,49 +20,59 @@ type migrationState struct {
 	Transactions []migrationTransaction `json:"transactions"`
 }
 
+type migrationPublicationProgress struct {
+	TargetID         string `json:"target_id"`
+	Direction        string `json:"direction"`
+	InputFingerprint string `json:"input_fingerprint,omitempty"`
+	State            string `json:"state"`
+	FailureStage     string `json:"failure_stage,omitempty"`
+}
+
 type migrationTransaction struct {
-	ID                       string         `json:"id"`
-	SourceRoute              string         `json:"source_route"`
-	ReplacedServer           string         `json:"replaced_server"`
-	ReplacementServer        string         `json:"replacement_server"`
-	ReplacementRoute         string         `json:"replacement_route"`
-	ReplacementLink          *string        `json:"replacement_link,omitempty"`
-	ReplacementServerContext map[string]any `json:"replacement_server_context,omitempty"`
-	Reason                   string         `json:"reason"`
-	Phase                    string         `json:"phase"`
-	Attempt                  int            `json:"attempt"`
-	CreatedAt                string         `json:"created_at"`
-	UpdatedAt                string         `json:"updated_at"`
-	AffectedClientTargets    []string       `json:"affected_client_targets"`
-	PublicationAttempted     []string       `json:"publication_attempted"`
-	CreatedReplacementServer bool           `json:"created_replacement_server"`
-	CreatedReplacementLink   bool           `json:"created_replacement_link"`
-	CreatedReplacementRoute  bool           `json:"created_replacement_route"`
-	LastFailure              string         `json:"last_failure,omitempty"`
-	OldCapacityRetired       bool           `json:"old_capacity_retired"`
-	ListenPort               int            `json:"listen_port"`
-	PortHopping              *PortHopping   `json:"port_hopping,omitempty"`
-	DisplayName              string         `json:"display_name"`
+	ID                       string                         `json:"id"`
+	SourceRoute              string                         `json:"source_route"`
+	ReplacedServer           string                         `json:"replaced_server"`
+	ReplacementServer        string                         `json:"replacement_server"`
+	ReplacementRoute         string                         `json:"replacement_route"`
+	ReplacementLink          *string                        `json:"replacement_link,omitempty"`
+	ReplacementServerContext map[string]any                 `json:"replacement_server_context,omitempty"`
+	Reason                   string                         `json:"reason"`
+	Phase                    string                         `json:"phase"`
+	Attempt                  int                            `json:"attempt"`
+	CreatedAt                string                         `json:"created_at"`
+	UpdatedAt                string                         `json:"updated_at"`
+	AffectedClientTargets    []string                       `json:"affected_client_targets"`
+	PublicationAttempted     []string                       `json:"publication_attempted"`
+	PublicationProgress      []migrationPublicationProgress `json:"publication_progress,omitempty"`
+	CreatedReplacementServer bool                           `json:"created_replacement_server"`
+	CreatedReplacementLink   bool                           `json:"created_replacement_link"`
+	CreatedReplacementRoute  bool                           `json:"created_replacement_route"`
+	LastFailure              string                         `json:"last_failure,omitempty"`
+	OldCapacityRetired       bool                           `json:"old_capacity_retired"`
+	ListenPort               int                            `json:"listen_port"`
+	PortHopping              *PortHopping                   `json:"port_hopping,omitempty"`
+	DisplayName              string                         `json:"display_name"`
 }
 
 type MigrationResult struct {
-	SchemaVersion            int               `json:"schema_version"`
-	MigrationID              string            `json:"migration_id"`
-	SourceRoute              string            `json:"source_route"`
-	ReplacementServer        string            `json:"replacement_server"`
-	ReplacementRoute         string            `json:"replacement_route"`
-	ReplacementLink          *string           `json:"replacement_link,omitempty"`
-	Phase                    string            `json:"phase"`
-	Status                   string            `json:"status"`
-	Summary                  string            `json:"summary"`
-	AffectedClientTargets    []string          `json:"affected_client_targets"`
-	Working                  map[string]string `json:"working"`
-	Changed                  []string          `json:"changed"`
-	LastFailure              string            `json:"last_failure,omitempty"`
-	PortHopping              *PortHopping      `json:"port_hopping,omitempty"`
-	Next                     []string          `json:"next"`
-	OldCapacityRetired       bool              `json:"old_capacity_retired"`
-	RetirementRequiresAction bool              `json:"retirement_requires_explicit_action"`
+	SchemaVersion            int                 `json:"schema_version"`
+	MigrationID              string              `json:"migration_id"`
+	SourceRoute              string              `json:"source_route"`
+	ReplacementServer        string              `json:"replacement_server"`
+	ReplacementRoute         string              `json:"replacement_route"`
+	ReplacementLink          *string             `json:"replacement_link,omitempty"`
+	Phase                    string              `json:"phase"`
+	Status                   string              `json:"status"`
+	Summary                  string              `json:"summary"`
+	AffectedClientTargets    []string            `json:"affected_client_targets"`
+	Publication              []map[string]string `json:"publication,omitempty"`
+	Working                  map[string]string   `json:"working"`
+	Changed                  []string            `json:"changed"`
+	LastFailure              string              `json:"last_failure,omitempty"`
+	PortHopping              *PortHopping        `json:"port_hopping,omitempty"`
+	Next                     []string            `json:"next"`
+	OldCapacityRetired       bool                `json:"old_capacity_retired"`
+	RetirementRequiresAction bool                `json:"retirement_requires_explicit_action"`
 }
 
 type migrationDependencies struct {
@@ -152,9 +162,14 @@ func migrateRouteWith(ctx context.Context, state *State, sourceRoute string, inp
 			return migrationResult(*txn), nil
 		}
 	}
-	if txn.Phase == "switching" || txn.Phase == "rollback-pending" {
+	if txn.Phase == "switching" {
+		txn.Phase = "rollback-pending"
+		if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
+			return MigrationResult{}, err
+		}
+	}
+	if txn.Phase == "rollback-pending" {
 		if err := rollbackMigrationSwitch(state, store, txn, deps); err != nil {
-			txn.Phase = "rollback-pending"
 			txn.LastFailure = "client-switch-rollback-failed"
 			if saveErr := saveMigrationState(state.PrivateDir, store, txn, deps.Now); saveErr != nil {
 				return MigrationResult{}, errors.Join(err, saveErr)
@@ -163,6 +178,7 @@ func migrateRouteWith(ctx context.Context, state *State, sourceRoute string, inp
 		}
 		txn.Phase = "replacement-deployed"
 		txn.PublicationAttempted = []string{}
+		txn.PublicationProgress = []migrationPublicationProgress{}
 		if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
 			return MigrationResult{}, err
 		}
@@ -229,17 +245,23 @@ func migrateRouteWith(ctx context.Context, state *State, sourceRoute string, inp
 		}
 		txn.Phase = "switching"
 		txn.PublicationAttempted = []string{}
+		txn.PublicationProgress = []migrationPublicationProgress{}
 		if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
 			return MigrationResult{}, err
 		}
 		failure, err := switchMigrationClients(state, store, txn, deps)
 		if err != nil {
+			txn.Phase = "rollback-pending"
+			txn.LastFailure = failure
+			if saveErr := saveMigrationState(state.PrivateDir, store, txn, deps.Now); saveErr != nil {
+				return MigrationResult{}, errors.Join(err, saveErr)
+			}
 			if rollbackErr := rollbackMigrationSwitch(state, store, txn, deps); rollbackErr != nil {
-				txn.Phase = "rollback-pending"
 				txn.LastFailure = "client-switch-rollback-failed"
 			} else {
 				txn.Phase = "replacement-deployed"
 				txn.PublicationAttempted = []string{}
+				txn.PublicationProgress = []migrationPublicationProgress{}
 				txn.LastFailure = failure
 			}
 			if saveErr := saveMigrationState(state.PrivateDir, store, txn, deps.Now); saveErr != nil {
@@ -338,7 +360,7 @@ func newMigrationTransaction(state *State, sourceRoute string, input map[string]
 		ReplacedServer: replacedServer, ReplacementServer: replacementServer, ReplacementRoute: replacementRoute,
 		ReplacementLink: replacementLink, ReplacementServerContext: serverContext,
 		Reason: defaultString(stringField(input, "reason"), "planned-replacement"), Phase: "planned",
-		CreatedAt: timestamp, UpdatedAt: timestamp, AffectedClientTargets: []string{}, PublicationAttempted: []string{},
+		CreatedAt: timestamp, UpdatedAt: timestamp, AffectedClientTargets: []string{}, PublicationAttempted: []string{}, PublicationProgress: []migrationPublicationProgress{},
 		ListenPort: port, PortHopping: portHopping, DisplayName: displayName,
 	}, nil
 }
@@ -444,12 +466,25 @@ func switchMigrationClients(state *State, store *migrationState, txn *migrationT
 		}
 		target := findClientTarget(state.Inventory, targetID)
 		if target != nil && target.Delivery == "subscription" {
-			txn.PublicationAttempted = sortedUnique(append(txn.PublicationAttempted, targetID))
+			fingerprint, err := subscriptionInputFingerprint(state, targetID)
+			if err != nil {
+				return "subscription-publication-fingerprint-failed", err
+			}
+			setMigrationPublicationProgress(txn, targetID, "forward", fingerprint, "intent", "")
 			if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
 				return "migration-checkpoint-failed", err
 			}
 			if _, err := deps.Publish(state, targetID, nil); err != nil {
+				publicationState, failureStage := migrationPublicationFailureState(err)
+				setMigrationPublicationProgress(txn, targetID, "forward", fingerprint, publicationState, failureStage)
+				if saveErr := saveMigrationState(state.PrivateDir, store, txn, deps.Now); saveErr != nil {
+					return "migration-checkpoint-failed", errors.Join(err, saveErr)
+				}
 				return "subscription-publication-failed", err
+			}
+			setMigrationPublicationProgress(txn, targetID, "forward", fingerprint, "complete", "")
+			if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
+				return "migration-checkpoint-failed", err
 			}
 		}
 	}
@@ -457,6 +492,7 @@ func switchMigrationClients(state *State, store *migrationState, txn *migrationT
 }
 
 func rollbackMigrationSwitch(state *State, store *migrationState, txn *migrationTransaction, deps migrationDependencies) error {
+	rollbackTargets := migrationPublicationTargets(txn)
 	if err := setMigrationSelection(state, txn, true); err != nil {
 		return err
 	}
@@ -466,16 +502,104 @@ func rollbackMigrationSwitch(state *State, store *migrationState, txn *migration
 			failures = append(failures, err)
 		}
 	}
-	for _, targetID := range txn.PublicationAttempted {
+	for _, targetID := range rollbackTargets {
+		target := findClientTarget(state.Inventory, targetID)
+		if target == nil || target.Delivery != "subscription" {
+			continue
+		}
+		fingerprint, err := subscriptionInputFingerprint(state, targetID)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if progress := migrationPublicationFor(txn, targetID); progress != nil && progress.Direction == "rollback" && progress.State == "complete" && progress.InputFingerprint == fingerprint {
+			continue
+		}
+		setMigrationPublicationProgress(txn, targetID, "rollback", fingerprint, "intent", "")
+		if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
+			failures = append(failures, err)
+			continue
+		}
 		if _, err := deps.Publish(state, targetID, nil); err != nil {
+			publicationState, failureStage := migrationPublicationFailureState(err)
+			setMigrationPublicationProgress(txn, targetID, "rollback", fingerprint, publicationState, failureStage)
+			if saveErr := saveMigrationState(state.PrivateDir, store, txn, deps.Now); saveErr != nil {
+				failures = append(failures, errors.Join(err, saveErr))
+			} else {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		setMigrationPublicationProgress(txn, targetID, "rollback", fingerprint, "complete", "")
+		if err := saveMigrationState(state.PrivateDir, store, txn, deps.Now); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
-	txn.PublicationAttempted = []string{}
-	return saveMigrationState(state.PrivateDir, store, txn, deps.Now)
+	return nil
+}
+
+func migrationPublicationFailureState(err error) (string, string) {
+	var staged *operationStageError
+	if !errors.As(err, &staged) {
+		return "intent", ""
+	}
+	switch staged.StateChanged {
+	case "subscription-published-unverified", "new-token-active-at-worker":
+		return "published-unverified", staged.Stage
+	case "subscription-published-verified", "subscription-token-rotated":
+		return "verified", staged.Stage
+	default:
+		return "intent", staged.Stage
+	}
+}
+
+func setMigrationPublicationProgress(txn *migrationTransaction, targetID, direction, fingerprint, state, failureStage string) {
+	for i := range txn.PublicationProgress {
+		if txn.PublicationProgress[i].TargetID == targetID {
+			txn.PublicationProgress[i] = migrationPublicationProgress{TargetID: targetID, Direction: direction, InputFingerprint: fingerprint, State: state, FailureStage: failureStage}
+			return
+		}
+	}
+	txn.PublicationProgress = append(txn.PublicationProgress, migrationPublicationProgress{TargetID: targetID, Direction: direction, InputFingerprint: fingerprint, State: state, FailureStage: failureStage})
+	sort.Slice(txn.PublicationProgress, func(i, j int) bool { return txn.PublicationProgress[i].TargetID < txn.PublicationProgress[j].TargetID })
+}
+
+func migrationPublicationFor(txn *migrationTransaction, targetID string) *migrationPublicationProgress {
+	for i := range txn.PublicationProgress {
+		if txn.PublicationProgress[i].TargetID == targetID {
+			return &txn.PublicationProgress[i]
+		}
+	}
+	return nil
+}
+
+func migrationPublicationTargets(txn *migrationTransaction) []string {
+	targets := append([]string(nil), txn.PublicationAttempted...)
+	for _, progress := range txn.PublicationProgress {
+		targets = append(targets, progress.TargetID)
+	}
+	return sortedUnique(targets)
+}
+
+func validMigrationPublicationProgress(progress migrationPublicationProgress) bool {
+	if !stableIDPattern.MatchString(progress.TargetID) || (progress.Direction != "forward" && progress.Direction != "rollback") {
+		return false
+	}
+	switch progress.State {
+	case "intent", "published-unverified", "verified", "complete":
+	default:
+		return false
+	}
+	if progress.InputFingerprint != "" {
+		decoded, err := hex.DecodeString(progress.InputFingerprint)
+		if err != nil || len(decoded) != sha256.Size {
+			return false
+		}
+	}
+	return true
 }
 
 func setMigrationSelection(state *State, txn *migrationTransaction, restoreOld bool) error {
@@ -589,10 +713,18 @@ func migrationResult(txn migrationTransaction) MigrationResult {
 	if txn.Phase == "complete" {
 		changed = append(changed, "affected-client-outputs-switched")
 	}
+	publication := make([]map[string]string, 0, len(txn.PublicationProgress))
+	for _, progress := range txn.PublicationProgress {
+		item := map[string]string{"target": progress.TargetID, "direction": progress.Direction, "state": progress.State}
+		if progress.FailureStage != "" {
+			item["failure_stage"] = progress.FailureStage
+		}
+		publication = append(publication, item)
+	}
 	return MigrationResult{
 		SchemaVersion: 1, MigrationID: txn.ID, SourceRoute: txn.SourceRoute, ReplacementServer: txn.ReplacementServer,
 		ReplacementRoute: txn.ReplacementRoute, ReplacementLink: txn.ReplacementLink, Phase: txn.Phase, Status: status,
-		Summary: summary, AffectedClientTargets: append([]string(nil), txn.AffectedClientTargets...), Working: working,
+		Summary: summary, AffectedClientTargets: append([]string(nil), txn.AffectedClientTargets...), Publication: publication, Working: working,
 		Changed: changed, LastFailure: txn.LastFailure, PortHopping: clonePortHopping(txn.PortHopping), Next: next, OldCapacityRetired: txn.OldCapacityRetired,
 		RetirementRequiresAction: true,
 	}
@@ -620,7 +752,16 @@ func readMigrationStateFile(path string) (*migrationState, error) {
 		if txn.ReplacementLink != nil {
 			idsValid = idsValid && stableIDPattern.MatchString(*txn.ReplacementLink)
 		}
-		if txn.ID == "" || seen[txn.ID] || !idsValid || !validMigrationPhase(txn.Phase) || txn.ListenPort < 1 || txn.ListenPort > 65535 || validatePortHopping(txn.ListenPort, txn.PortHopping) != nil {
+		progressValid := true
+		progressTargets := map[string]bool{}
+		for _, progress := range txn.PublicationProgress {
+			if progressTargets[progress.TargetID] || !validMigrationPublicationProgress(progress) {
+				progressValid = false
+				break
+			}
+			progressTargets[progress.TargetID] = true
+		}
+		if txn.ID == "" || seen[txn.ID] || !idsValid || !validMigrationPhase(txn.Phase) || !progressValid || txn.ListenPort < 1 || txn.ListenPort > 65535 || validatePortHopping(txn.ListenPort, txn.PortHopping) != nil {
 			return nil, errors.New("private migration state contains an invalid transaction")
 		}
 		seen[txn.ID] = true

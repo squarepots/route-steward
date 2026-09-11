@@ -32,17 +32,39 @@ var (
 )
 
 type subscriptionState struct {
-	Schema            int     `json:"schema"`
-	WorkerName        string  `json:"worker_name"`
-	Host              string  `json:"host"`
-	Token             string  `json:"token"`
-	PendingToken      *string `json:"pending_token"`
-	LastPublishedAt   *string `json:"last_published_at"`
-	RotationStartedAt *string `json:"rotation_started_at,omitempty"`
-	RotatedAt         *string `json:"rotated_at,omitempty"`
-	Reference         string  `json:"-"`
-	Path              string  `json:"-"`
-	TargetID          string  `json:"-"`
+	Schema                    int     `json:"schema"`
+	WorkerName                string  `json:"worker_name"`
+	Host                      string  `json:"host"`
+	Token                     string  `json:"token"`
+	PendingToken              *string `json:"pending_token"`
+	LastPublishedAt           *string `json:"last_published_at"`
+	PublishedInputFingerprint string  `json:"published_input_fingerprint,omitempty"`
+	PublishedBodySHA256       string  `json:"published_body_sha256,omitempty"`
+	RotationStartedAt         *string `json:"rotation_started_at,omitempty"`
+	RotatedAt                 *string `json:"rotated_at,omitempty"`
+	Reference                 string  `json:"-"`
+	Path                      string  `json:"-"`
+	TargetID                  string  `json:"-"`
+}
+
+type subscriptionDependencies struct {
+	Deploy         func(workerName, host, token, format, body string) error
+	Verify         func(endpoint, format, expected string) error
+	WriteState     func(path string, value any) error
+	Render         func(*State, string, bool) (RenderResult, error)
+	WriteReference func(*State, string, *subscriptionState) (*Artifact, error)
+	NewToken       func() (string, error)
+}
+
+func defaultSubscriptionDependencies() subscriptionDependencies {
+	return subscriptionDependencies{
+		Deploy:         deployWorker,
+		Verify:         verifySubscriptionEndpoint,
+		WriteState:     writeJSONAtomic,
+		Render:         RenderClients,
+		WriteReference: writeSubscriptionReference,
+		NewToken:       newSubscriptionToken,
+	}
 }
 
 func AssertSubscriptionBodySize(body string) (int, error) {
@@ -249,7 +271,36 @@ func writeSubscriptionReference(state *State, targetID string, subscription *sub
 	return &Artifact{ID: targetID + "-subscription", FileName: filepath.Base(path), RelativePath: "<private>/delivery/" + filepath.Base(path)}, nil
 }
 
+func subscriptionArtifactRetry(target *ClientTarget) string {
+	if target != nil && target.Renderer == "shadowrocket" {
+		return "render-client"
+	}
+	return "publish-subscription"
+}
+
+func subscriptionEndpoint(subscription *subscriptionState, token string) string {
+	return "https://" + subscription.Host + "/s/" + token
+}
+
+func ensureSubscriptionPublished(subscription *subscriptionState, target *ClientTarget, token, body string, deps subscriptionDependencies) (bool, error) {
+	endpoint := subscriptionEndpoint(subscription, token)
+	if deps.Verify(endpoint, target.Renderer, body) == nil {
+		return false, nil
+	}
+	if err := deps.Deploy(subscription.WorkerName, subscription.Host, token, target.Renderer, body); err != nil {
+		return false, err
+	}
+	if err := deps.Verify(endpoint, target.Renderer, body); err != nil {
+		return true, &operationStageError{Stage: "subscription-verification", StateChanged: "subscription-published-unverified", Retry: "publish-subscription", PublicationState: "published-unverified", ClientRefreshState: "unknown", Err: err}
+	}
+	return true, nil
+}
+
 func PublishSubscription(state *State, targetID string, context map[string]any) (map[string]any, error) {
+	return publishSubscriptionWith(state, targetID, context, defaultSubscriptionDependencies())
+}
+
+func publishSubscriptionWith(state *State, targetID string, context map[string]any, deps subscriptionDependencies) (map[string]any, error) {
 	subscription, err := readSubscriptionState(state, targetID)
 	if err != nil {
 		if stringField(context, "worker_name") == "" || stringField(context, "host") == "" {
@@ -267,24 +318,35 @@ func PublishSubscription(state *State, targetID string, context map[string]any) 
 	if err != nil {
 		return nil, err
 	}
+	fingerprint, err := subscriptionInputFingerprint(state, targetID)
+	if err != nil {
+		return nil, err
+	}
 	target := findClientTarget(state.Inventory, targetID)
-	if err := deployWorkerAndVerify(subscription.WorkerName, subscription.Host, subscription.Token, target.Renderer, body); err != nil {
+	deployed, err := ensureSubscriptionPublished(subscription, target, subscription.Token, body, deps)
+	if err != nil {
 		return nil, err
 	}
 	now := utcNow()
 	subscription.LastPublishedAt = &now
-	if err := writeJSONAtomic(subscription.Path, subscription); err != nil {
-		return nil, &operationStageError{Stage: "subscription-state", StateChanged: "subscription-published", Retry: "publish-subscription", Err: err}
+	subscription.PublishedInputFingerprint = fingerprint
+	subscription.PublishedBodySHA256 = subscriptionBodySHA256(body)
+	if err := deps.WriteState(subscription.Path, subscription); err != nil {
+		return nil, &operationStageError{Stage: "subscription-state", StateChanged: "subscription-published-verified", Retry: "publish-subscription", LocalRenderState: "current", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 	}
-	result := map[string]any{"client_target": targetID, "worker": subscription.WorkerName, "published": true, "verified": true}
+	result := map[string]any{
+		"client_target": targetID, "worker": subscription.WorkerName, "published": true, "verified": true,
+		"publication_fingerprint": fingerprint, "remote_mutation_performed": deployed,
+		"local_render_state": "current", "publication_state": "current", "client_refresh_state": "current",
+	}
 	if target.Renderer == "shadowrocket" {
-		if _, err := RenderClients(state, targetID, true); err != nil {
-			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-published", Retry: "render-client", Err: err}
+		if _, err := deps.Render(state, targetID, true); err != nil {
+			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-published-verified", Retry: "render-client", LocalRenderState: "stale-or-missing", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 		}
 	} else {
-		artifact, err := writeSubscriptionReference(state, targetID, subscription)
+		artifact, err := deps.WriteReference(state, targetID, subscription)
 		if err != nil {
-			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-published", Retry: "publish-subscription", Err: err}
+			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-published-verified", Retry: "publish-subscription", LocalRenderState: "current", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 		}
 		result["import_artifact"] = artifact
 	}
@@ -292,6 +354,10 @@ func PublishSubscription(state *State, targetID string, context map[string]any) 
 }
 
 func RotateSubscriptionToken(state *State, targetID string) (map[string]any, error) {
+	return rotateSubscriptionTokenWith(state, targetID, defaultSubscriptionDependencies())
+}
+
+func rotateSubscriptionTokenWith(state *State, targetID string, deps subscriptionDependencies) (map[string]any, error) {
 	subscription, err := readSubscriptionState(state, targetID)
 	if err != nil {
 		return nil, err
@@ -300,14 +366,14 @@ func RotateSubscriptionToken(state *State, targetID string) (map[string]any, err
 	if subscription.PendingToken != nil {
 		proposed = *subscription.PendingToken
 	} else {
-		proposed, err = newSubscriptionToken()
+		proposed, err = deps.NewToken()
 		if err != nil {
 			return nil, err
 		}
 		now := utcNow()
 		subscription.PendingToken = &proposed
 		subscription.RotationStartedAt = &now
-		if err := writeJSONAtomic(subscription.Path, subscription); err != nil {
+		if err := deps.WriteState(subscription.Path, subscription); err != nil {
 			return nil, err
 		}
 	}
@@ -315,13 +381,22 @@ func RotateSubscriptionToken(state *State, targetID string) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
+	fingerprint, err := subscriptionInputFingerprint(state, targetID)
+	if err != nil {
+		return nil, err
+	}
 	target := findClientTarget(state.Inventory, targetID)
-	if err := deployWorkerAndVerify(subscription.WorkerName, subscription.Host, proposed, target.Renderer, body); err != nil {
+	_, err = ensureSubscriptionPublished(subscription, target, proposed, body, deps)
+	if err != nil {
+		if staged := (*operationStageError)(nil); errors.As(err, &staged) {
+			staged.Retry = "rotate-subscription-token"
+			staged.StateChanged = "new-token-active-at-worker"
+		}
 		return nil, err
 	}
 	var fresh subscriptionState
 	if err := readJSON(subscription.Path, &fresh); err != nil {
-		return nil, err
+		return nil, &operationStageError{Stage: "subscription-token-state", StateChanged: "new-token-active-at-worker", Retry: "rotate-subscription-token", LocalRenderState: "current", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 	}
 	if fresh.PendingToken == nil || *fresh.PendingToken != proposed {
 		return nil, errors.New("subscription rotation intent changed during publication")
@@ -331,20 +406,37 @@ func RotateSubscriptionToken(state *State, targetID string) (map[string]any, err
 	fresh.PendingToken = nil
 	fresh.RotatedAt = &now
 	fresh.LastPublishedAt = &now
-	if err := writeJSONAtomic(subscription.Path, &fresh); err != nil {
-		return nil, &operationStageError{Stage: "subscription-token-state", StateChanged: "new-token-active-at-worker", Retry: "rotate-subscription-token", Err: err}
+	fresh.PublishedInputFingerprint = fingerprint
+	fresh.PublishedBodySHA256 = subscriptionBodySHA256(body)
+	if err := deps.WriteState(subscription.Path, &fresh); err != nil {
+		return nil, &operationStageError{Stage: "subscription-token-state", StateChanged: "new-token-active-at-worker", Retry: "rotate-subscription-token", LocalRenderState: "current", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 	}
 	if target.Renderer == "shadowrocket" {
-		if _, err := RenderClients(state, targetID, true); err != nil {
-			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-token-rotated", Retry: "render-client", Err: err}
+		if _, err := deps.Render(state, targetID, true); err != nil {
+			return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-token-rotated", Retry: subscriptionArtifactRetry(target), LocalRenderState: "stale-or-missing", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 		}
-	} else if _, err := writeSubscriptionReference(state, targetID, &fresh); err != nil {
-		return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-token-rotated", Retry: "rotate-subscription-token", Err: err}
+	} else if _, err := deps.WriteReference(state, targetID, &fresh); err != nil {
+		return nil, &operationStageError{Stage: "client-import-artifact", StateChanged: "subscription-token-rotated", Retry: subscriptionArtifactRetry(target), LocalRenderState: "current", PublicationState: "current", ClientRefreshState: "pending", Err: err}
 	}
-	return map[string]any{"client_target": targetID, "token_rotated": true, "published": true, "verified": true, "old_token_revoked_at_worker": true, "unrelated_route_credentials_changed": false, "unrelated_client_credentials_changed": false}, nil
+	return map[string]any{
+		"client_target": targetID, "token_rotated": true, "published": true, "verified": true,
+		"publication_fingerprint": fingerprint, "old_token_revoked_at_worker": true,
+		"unrelated_route_credentials_changed": false, "unrelated_client_credentials_changed": false,
+		"local_render_state": "current", "publication_state": "current", "client_refresh_state": "current",
+	}, nil
 }
 
 func deployWorkerAndVerify(workerName, host, token, format, body string) error {
+	if err := deployWorker(workerName, host, token, format, body); err != nil {
+		return err
+	}
+	if err := verifySubscriptionEndpoint(subscriptionEndpoint(&subscriptionState{Host: host}, token), format, body); err != nil {
+		return &operationStageError{Stage: "subscription-verification", StateChanged: "subscription-published-unverified", Retry: "publish-subscription", PublicationState: "published-unverified", ClientRefreshState: "unknown", Err: err}
+	}
+	return nil
+}
+
+func deployWorker(workerName, host, token, format, body string) error {
 	if _, err := AssertSubscriptionBodySize(body); err != nil {
 		return err
 	}
@@ -418,7 +510,7 @@ func deployWorkerAndVerify(workerName, host, token, format, body string) error {
 	if err := run(npx, append(base, "--secrets-file", secretPath, "--keep-vars", "--minify", "--strict")...); err != nil {
 		return fmt.Errorf("Cloudflare rejected Worker deployment: %w", err)
 	}
-	return verifySubscriptionEndpoint("https://"+host+"/s/"+token, format, body)
+	return nil
 }
 
 func verifySubscriptionEndpoint(endpoint, format, expected string) error {
@@ -433,11 +525,12 @@ func verifySubscriptionEndpoint(endpoint, format, expected string) error {
 		return errors.New("private subscription endpoint could not be verified after publication")
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 8192))
+	limit := int64(subscriptionSecretChunkBytes*subscriptionMaxChunks + 1)
+	body, err := io.ReadAll(io.LimitReader(response.Body, limit))
 	if err != nil {
 		return err
 	}
-	if response.StatusCode != http.StatusOK || string(body) != expected {
+	if response.StatusCode != http.StatusOK || len(body) > subscriptionSecretChunkBytes*subscriptionMaxChunks || string(body) != expected {
 		return errors.New("private subscription endpoint did not return the exact locally generated body")
 	}
 	if !strings.Contains(strings.ToLower(response.Header.Get("Cache-Control")), "no-store") {
