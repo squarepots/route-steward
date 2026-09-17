@@ -181,7 +181,7 @@ func operateDirect(ctx context.Context, state *State, route Route, server Server
 	if _, err = runSCP(ctx, host, []string{"-r", filepath.Join(localRoot, "server"), host.Address + ":" + remoteRoot + "/"}); err != nil {
 		return nil, err
 	}
-	remoteServer := "/tmp/route-steward-" + strings.TrimPrefix(remoteRoot, "/tmp/route-steward-") + "/server"
+	remoteServer := remoteRoot + "/server"
 	if _, err = runSSH(ctx, host, bashCommand("sudo", "bash", remoteServer+"/preflight.sh")); err != nil {
 		return nil, err
 	}
