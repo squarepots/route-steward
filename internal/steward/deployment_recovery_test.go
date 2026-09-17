@@ -10,10 +10,23 @@ func TestDeploymentAuditDecisionUsesVerifiedRemoteState(t *testing.T) {
 	route := &Route{State: "pending"}
 
 	decision, err := deploymentAuditDecision(route, AuditEvidence{Category: "in-sync"})
-	if err != nil || decision != "adopt" {
-		t.Fatalf("verified in-sync Route should be adopted without remote mutation: decision=%q err=%v", decision, err)
+	if err != nil || decision != "deploy" {
+		t.Fatalf("fresh pending Route should still perform its initial deployment: decision=%q err=%v", decision, err)
 	}
 
+	route.State = "deploying"
+	decision, err = deploymentAuditDecision(route, AuditEvidence{Category: "in-sync"})
+	if err != nil || decision != "adopt" {
+		t.Fatalf("verified in-sync retry should be adopted without remote mutation: decision=%q err=%v", decision, err)
+	}
+
+	route.State = "deployed"
+	decision, err = deploymentAuditDecision(route, AuditEvidence{Category: "in-sync"})
+	if err != nil || decision != "adopt" {
+		t.Fatalf("already deployed in-sync Route should be adopted without remote mutation: decision=%q err=%v", decision, err)
+	}
+
+	route.State = "pending"
 	decision, err = deploymentAuditDecision(route, AuditEvidence{Category: "service-missing"})
 	if err != nil || decision != "deploy" {
 		t.Fatalf("known missing service should allow deployment: decision=%q err=%v", decision, err)
