@@ -59,6 +59,9 @@ func deployRouteWithoutRender(ctx context.Context, state *State, routeID string)
 }
 
 func deploymentAuditAllowsMutation(route *Route, current AuditEvidence) error {
+	if current.Category == "in-sync" && route.State == "pending" {
+		return nil
+	}
 	if current.Category == "service-missing" && route.State != "deployed" {
 		return nil
 	}
@@ -82,7 +85,7 @@ func deployRoute(ctx context.Context, state *State, routeID string, skipClientVa
 	}
 
 	current := AuditRoute(ctx, state, routeID)
-	if current.Category == "in-sync" {
+	if current.Category == "in-sync" && (route.State == "deploying" || route.State == "deployed") {
 		return adoptVerifiedRoute(state, route, current, skipClientValidation, renderClients)
 	}
 	if err := deploymentAuditAllowsMutation(route, current); err != nil {
@@ -178,7 +181,7 @@ func operateDirect(ctx context.Context, state *State, route Route, server Server
 	if _, err = runSCP(ctx, host, []string{"-r", filepath.Join(localRoot, "server"), host.Address + ":" + remoteRoot + "/"}); err != nil {
 		return nil, err
 	}
-	remoteServer := remoteRoot + "/server"
+	remoteServer := "/tmp/route-steward-" + strings.TrimPrefix(remoteRoot, "/tmp/route-steward-") + "/server"
 	if _, err = runSSH(ctx, host, bashCommand("sudo", "bash", remoteServer+"/preflight.sh")); err != nil {
 		return nil, err
 	}
