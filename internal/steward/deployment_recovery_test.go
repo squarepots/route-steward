@@ -6,26 +6,59 @@ import (
 	"testing"
 )
 
-func TestDeploymentAuditAllowsOnlyKnownRemoteStates(t *testing.T) {
+func TestDeploymentAuditDecisionUsesVerifiedRemoteState(t *testing.T) {
 	route := &Route{State: "pending"}
-	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err != nil {
-		t.Fatalf("fresh pending Route rejected service-missing state: %v", err)
-	}
-	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "in-sync"}); err != nil {
-		t.Fatalf("pending Route rejected verified in-sync state: %v", err)
-	}
-	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "undetermined"}); err == nil {
-		t.Fatal("pending Route accepted undetermined remote state")
+
+	decision, err := deploymentAuditDecision(route, AuditEvidence{Category: "in-sync"})
+	if err != nil || decision != "adopt" {
+		t.Fatalf("verified in-sync Route should be adopted without remote mutation: decision=%q err=%v", decision, err)
 	}
 
-	route.State = "deploying"
-	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err != nil {
-		t.Fatalf("retry checkpoint rejected known missing service: %v", err)
+	decision, err = deploymentAuditDecision(route, AuditEvidence{Category: "service-missing"})
+	if err != nil || decision != "deploy" {
+		t.Fatalf("known missing service should allow deployment: decision=%q err=%v", decision, err)
+	}
+
+	if decision, err = deploymentAuditDecision(route, AuditEvidence{Category: "undetermined"}); err == nil || decision != "" {
+		t.Fatalf("undetermined remote state should block mutation: decision=%q err=%v", decision, err)
 	}
 
 	route.State = "deployed"
-	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err == nil {
-		t.Fatal("deployed Route accepted a missing remote service")
+	if decision, err = deploymentAuditDecision(route, AuditEvidence{Category: "service-missing"}); err == nil || decision != "" {
+		t.Fatalf("deployed Route with missing service should block mutation: decision=%q err=%v", decision, err)
+	}
+}
+
+func TestAdoptVerifiedRouteRestoresLocalState(t *testing.T) {
+	state, route := healthFixture(t, "direct", false)
+	current := findRoute(state.Inventory, route.ID)
+	current.Enabled = false
+	current.State = "deploying"
+	if err := state.Save(false); err != nil {
+		t.Fatal(err)
+	}
+
+	evidence := AuditEvidence{
+		Route:                     route.ID,
+		Status:                    "healthy",
+		Category:                  "in-sync",
+		ActualEgressIPv4:          stringPointer(findServer(state.Inventory, route.ExitServer).Network.ExpectedEgressIPv4),
+		EgressMatchesDeclaredExit: true,
+	}
+	result, err := adoptVerifiedRoute(state, current, evidence, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["state"] != "deployed" || result["enabled"] != true {
+		t.Fatalf("verified Route was not adopted: %#v", result)
+	}
+	reloaded, err := LoadState(state.PrivateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted := findRoute(reloaded.Inventory, route.ID)
+	if adopted == nil || adopted.State != "deployed" || !adopted.Enabled {
+		t.Fatalf("verified Route was not persisted locally: %#v", adopted)
 	}
 }
 
