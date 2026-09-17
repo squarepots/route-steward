@@ -7,12 +7,16 @@ import (
 )
 
 const safeFailureSummary = "The operation failed locally. No secret-bearing diagnostic was returned through the agent surface."
+const stagedFailureSummary = "The operation stopped after a partial state change. Use stage, state_changed, and retry to continue safely."
 
 type operationStageError struct {
-	Stage        string
-	StateChanged string
-	Retry        string
-	Err          error
+	Stage              string
+	StateChanged       string
+	Retry              string
+	LocalRenderState   string
+	PublicationState   string
+	ClientRefreshState string
+	Err                error
 }
 
 func (e *operationStageError) Error() string { return e.Err.Error() }
@@ -146,9 +150,23 @@ func executeReady(ctx context.Context, state *State, request Request) (any, stri
 		data := map[string]any{"summary": safeFailureSummary, "operation": request.Operation}
 		var staged *operationStageError
 		if errors.As(err, &staged) {
+			data["summary"] = stagedFailureSummary
 			data["stage"] = staged.Stage
 			data["state_changed"] = staged.StateChanged
-			data["retry"] = staged.Retry
+			retry := staged.Retry
+			if request.Operation == "rotate-subscription-token" && staged.StateChanged == "subscription-published-unverified" {
+				retry = "rotate-subscription-token"
+			}
+			data["retry"] = retry
+			if staged.LocalRenderState != "" {
+				data["local_render_state"] = staged.LocalRenderState
+			}
+			if staged.PublicationState != "" {
+				data["publication_state"] = staged.PublicationState
+			}
+			if staged.ClientRefreshState != "" {
+				data["client_refresh_state"] = staged.ClientRefreshState
+			}
 		}
 		return data, code, 1
 	}
