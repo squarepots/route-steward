@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-func TestDeploymentAuditAllowsOnlyKnownMissingRemoteStateForMutation(t *testing.T) {
+func TestDeploymentAuditAllowsMutationOnlyFromKnownSafeStates(t *testing.T) {
 	route := &Route{State: "pending"}
 	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err != nil {
 		t.Fatalf("fresh pending Route rejected service-missing state: %v", err)
 	}
-	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "in-sync"}); err == nil {
-		t.Fatal("pending Route accepted remote mutation even though the verified deployment is already in sync")
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "in-sync"}); err != nil {
+		t.Fatalf("fresh pending Route rejected verified in-sync state: %v", err)
 	}
 	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "undetermined"}); err == nil {
 		t.Fatal("pending Route accepted undetermined remote state")
@@ -22,10 +22,16 @@ func TestDeploymentAuditAllowsOnlyKnownMissingRemoteStateForMutation(t *testing.
 	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err != nil {
 		t.Fatalf("retry checkpoint rejected known missing service: %v", err)
 	}
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "in-sync"}); err == nil {
+		t.Fatal("deploying Route accepted another remote mutation after audit proved the existing deployment is in sync")
+	}
 
 	route.State = "deployed"
 	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "service-missing"}); err == nil {
 		t.Fatal("deployed Route accepted a missing remote service")
+	}
+	if err := deploymentAuditAllowsMutation(route, AuditEvidence{Category: "in-sync"}); err == nil {
+		t.Fatal("deployed Route accepted another remote mutation after audit proved the existing deployment is in sync")
 	}
 }
 
