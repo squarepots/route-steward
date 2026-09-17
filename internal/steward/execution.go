@@ -60,7 +60,10 @@ func deployRouteWithoutRender(ctx context.Context, state *State, routeID string)
 
 func deploymentAuditDecision(route *Route, current AuditEvidence) (string, error) {
 	if current.Category == "in-sync" {
-		return "adopt", nil
+		if route.State == "deploying" || route.State == "deployed" {
+			return "adopt", nil
+		}
+		return "deploy", nil
 	}
 	if current.Category == "service-missing" && route.State != "deployed" {
 		return "deploy", nil
