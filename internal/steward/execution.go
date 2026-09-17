@@ -59,9 +59,6 @@ func deployRouteWithoutRender(ctx context.Context, state *State, routeID string)
 }
 
 func deploymentAuditAllowsMutation(route *Route, current AuditEvidence) error {
-	if current.Category == "in-sync" {
-		return nil
-	}
 	if current.Category == "service-missing" && route.State != "deployed" {
 		return nil
 	}
@@ -85,6 +82,9 @@ func deployRoute(ctx context.Context, state *State, routeID string, skipClientVa
 	}
 
 	current := AuditRoute(ctx, state, routeID)
+	if current.Category == "in-sync" {
+		return adoptVerifiedRoute(state, route, current, skipClientValidation, renderClients)
+	}
 	if err := deploymentAuditAllowsMutation(route, current); err != nil {
 		return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: err}
 	}
