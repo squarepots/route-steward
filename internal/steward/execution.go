@@ -58,14 +58,14 @@ func deployRouteWithoutRender(ctx context.Context, state *State, routeID string)
 	return deployRoute(ctx, state, routeID, true, false)
 }
 
-func deploymentAuditAllowsMutation(route *Route, current AuditEvidence) error {
+func deploymentAuditDecision(route *Route, current AuditEvidence) (string, error) {
 	if current.Category == "in-sync" {
-		return nil
+		return "adopt", nil
 	}
 	if current.Category == "service-missing" && route.State != "deployed" {
-		return nil
+		return "deploy", nil
 	}
-	return errors.New("remote Route state is not safe to overwrite")
+	return "", errors.New("remote Route state is not safe to overwrite")
 }
 
 func markRouteDeploying(state *State, routeID string) error {
@@ -85,8 +85,12 @@ func deployRoute(ctx context.Context, state *State, routeID string, skipClientVa
 	}
 
 	current := AuditRoute(ctx, state, routeID)
-	if err := deploymentAuditAllowsMutation(route, current); err != nil {
+	decision, err := deploymentAuditDecision(route, current)
+	if err != nil {
 		return nil, &operationStageError{Stage: "remote-preflight-audit", StateChanged: "remote-state-unchanged", Retry: "audit", Err: err}
+	}
+	if decision == "adopt" {
+		return adoptVerifiedRoute(state, route, current, skipClientValidation, renderClients)
 	}
 	if err := markRouteDeploying(state, routeID); err != nil {
 		return nil, &operationStageError{Stage: "deployment-intent", StateChanged: "remote-state-unchanged", Retry: "deploy-route", Err: err}
