@@ -133,11 +133,11 @@ Publication state and credentials belong to one ClientTarget. A publication resu
 
 Inventory represents desired state. Audit and health read current remote behavior and store timestamped sanitized evidence. Drift compares desired state with that evidence and with generated client artifacts.
 
-Observed evidence is historical after it is recorded. Decisions that require current remote truth use a fresh audit or health check instead of treating an old green record as current reality.
+Stored observations are historical evidence. When a decision depends on current remote state, run a fresh audit or health check.
 
 ## Migration and recovery
 
-Route replacement is a resumable transaction. Replacement capacity is created and validated while the current Route remains available. Client selection changes only after the replacement passes the required checks. Old capacity remains available until retirement is separately authorized.
+Route replacement is resumable. The existing Route remains available until the replacement passes validation, then client selection switches. Retiring old capacity requires separate authorization.
 
 Recovery verifies the encrypted archive, restores canonical private state, relocates private paths where required, and resets regenerable observed evidence. Restored infrastructure is audited before later remote mutation.
 

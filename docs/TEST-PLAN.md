@@ -12,7 +12,7 @@ This plan covers local validation, fake-transport acceptance tests, and live inf
 
 ## L0 Capability Smoke Test
 
-Goal: confirm that the executable exposes the Go machine interface.
+Verify that the executable exposes the Go machine interface.
 
 Normal URL-first use:
 
@@ -42,7 +42,7 @@ Pass criteria:
 
 ## L1 Source Validation
 
-Goal: verify the Go engine, schemas, capability metadata, renderers, preflight logic, MCP interface, migration state, recovery, context projections, and sanitized failures. This path requires Go 1.27.
+Verify the Go engine, schemas, capability metadata, renderers, preflight logic, MCP interface, migration state, recovery, context projections, and sanitized failures. This path requires Go 1.27.
 
 Commands:
 
@@ -72,7 +72,7 @@ Pass criteria:
 
 ## L2 Static Safety And Public Repository Boundary
 
-Goal: prevent secrets, generated artifacts, live addresses, unsupported host assumptions, and stale localization from entering the public tree.
+Verify that secrets, generated artifacts, live addresses, unsupported host assumptions, and stale localization stay out of the public tree.
 
 Commands:
 
@@ -100,7 +100,7 @@ Pass criteria:
 
 ## L3 Worker Subscription Delivery
 
-Goal: prove that the optional Cloudflare Worker remains a narrow private configuration delivery surface.
+Verify that the optional Cloudflare Worker remains a narrow private configuration delivery surface.
 
 Commands:
 
@@ -126,7 +126,7 @@ Pass criteria:
 
 ## L4 Fake-Transport CLI And MCP User Journey
 
-Goal: exercise the installed binary lifecycle without connecting to real SSH hosts.
+Exercise the installed binary lifecycle without connecting to real SSH hosts.
 
 Command:
 
@@ -150,7 +150,7 @@ Coverage:
 
 ## L5 Live Direct Route Smoke Test
 
-Goal: prove that one direct Route can be deployed, audited, rendered, and validated with real client traffic on a dedicated host.
+Verify one direct Route with real client traffic on a dedicated host.
 
 Prerequisites:
 
@@ -185,7 +185,7 @@ Pass criteria:
 
 ## L6 Live Relay Route And WireGuard Link
 
-Goal: prove that a single-hop WireGuard relay can be deployed and validated with real traffic.
+Verify a single-hop WireGuard relay with real traffic.
 
 Prerequisites:
 
@@ -205,7 +205,7 @@ Coverage:
 
 ## L7 Port Hopping
 
-Goal: prove that 2-to-8 consecutive UDP port hopping remains consistent across validation, deployment, audit, health, rendering, and migration.
+Verify 2-to-8 consecutive UDP port hopping across validation, deployment, audit, health, rendering, and migration.
 
 Coverage:
 
@@ -226,7 +226,7 @@ Pass criteria:
 
 ## L8 ClientTarget Import And Runtime Checks
 
-Goal: confirm that rendered artifacts are accepted by supported clients without manual editing.
+Verify that supported clients accept rendered artifacts without manual editing.
 
 Matrix:
 
@@ -248,7 +248,7 @@ Pass criteria:
 
 ## L9 Migration, Rollback, And Recovery
 
-Goal: prove that replacement is overlap-first and retryable without damaging the currently working path.
+Verify that route replacement can be retried while the current Route remains usable.
 
 Coverage:
 
@@ -270,7 +270,7 @@ Pass criteria:
 
 ## L10 Release Gate
 
-Goal: ensure the published tree is the same behavior validated by CI.
+Verify that CI validates the same tree that will be published.
 
 Hosted CI must pass:
 

@@ -4,14 +4,7 @@ This document maps concrete compromise/failure cases to RST's trust boundary and
 
 ## Security goals
 
-RST aims to:
-
-- keep canonical infrastructure state and credentials local to the user's controller account;
-- expose sanitized machine results to AI agents instead of raw secret state;
-- scope mutations to declared RST objects and fail closed when context is incomplete or conflicting;
-- avoid surveillance/traffic-history collection;
-- make recovery possible without chat history or a hosted RST control plane;
-- keep compromise remediation as narrow as the affected credential/resource permits.
+RST keeps canonical infrastructure state and credentials on the user's controller account and exposes sanitized machine results to AI agents. Mutations are limited to declared RST objects and stop when context is incomplete or conflicting. RST avoids traffic-history collection and can recover without chat history or a hosted control plane. Compromise response stays as narrow as the affected credential or resource permits.
 
 RST does **not** claim anonymity, protection from a fully compromised controller account, or protection from a cloud/VPS provider that controls the infrastructure it supplies.
 
@@ -51,6 +44,6 @@ No lower layer can grant permission that a higher layer did not grant.
 
 ## Remediation principle
 
-Prefer the smallest response that actually removes the compromised capability. Do not perform broad credential rotation, server deletion, firewall reset, or unrelated account mutation merely because one bounded credential leaked.
+Remediation is scoped to the compromised capability. Do not rotate credentials, delete servers, reset firewalls, or mutate unrelated accounts without evidence that the affected scope requires it.
 
-When compromise scope cannot be determined safely, stop mutation, preserve working capacity where safe, gather read-only evidence, and ask for the user decision/authorization needed for the next step.
+If the affected scope cannot be determined safely, stop mutation, preserve working capacity where safe, gather read-only evidence, and ask for the authorization needed for the next step.
